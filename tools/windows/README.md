@@ -197,6 +197,13 @@ exe, the honest position is that an unsigned download may be queried — verify 
 against the published source, or rebuild it, and allow the operation in the AV
 product's log.
 
+> **Rebuilding produces the same program, not the same bytes.** The linked PE
+> header carries a build timestamp, and the pinned toolchain's linker accepts no
+> flag to zero it, so a rebuild differs from the released file in that field (same
+> size, same behaviour, same vectors). To check a download instead, compare the
+> SHA-256 published with the release; to check the code, read
+> `tools/windows/launcher.c` or rebuild it from the source in this repository.
+
 **Log.** Every handler run appends to:
 
 ```
