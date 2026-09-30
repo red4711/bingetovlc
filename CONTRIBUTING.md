@@ -174,3 +174,23 @@ follow [`SECURITY.md`](SECURITY.md).
 ## License
 
 Contributions are accepted under the MIT license — see [`LICENSE`](LICENSE).
+
+## Local test hygiene
+
+The end-to-end suite binds two ports: `8731` for the fake Emby server and `9331` for
+Chromium's DevTools endpoint. If a run is interrupted, the next one fails immediately
+with `port 8731 is already in use` even though the suite itself is fine. Clear the
+leftovers and re-run:
+
+```bash
+for p in 8731 9331; do
+  pid=$(ss -ltnp 2>/dev/null | grep ":$p " | sed -E 's/.*pid=([0-9]+).*/\1/' | head -1)
+  [ -n "$pid" ] && kill "$pid"
+done
+node --test "tests/e2e/**/*.test.mjs"
+```
+
+The suite also refuses to run silently against a stale build: `tests/e2e/run-e2e.mjs`
+copies `dist/bingetovlc.user.js` into a temporary served directory at the start, and
+skips with a clear message when the build is missing. Run `python3 tools/build.py`
+first after touching `src/`.
