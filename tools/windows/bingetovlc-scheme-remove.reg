@@ -1,0 +1,16 @@
+Windows Registry Editor Version 5.00
+
+; bingetovlc - removes the per-user (HKCU) protocol handler keys.
+;
+; Import with:
+;   reg import bingetovlc-scheme-remove.reg
+;
+; NOTE: this DROPS the keys. It does not restore a handler that bingetovlc
+; overrode. If you want the previous handler back, use:
+;   powershell -ExecutionPolicy Bypass -File uninstall.ps1
+; which restores a backed-up key when one exists under
+; %LOCALAPPDATA%\bingetovlc\backup.
+
+[-HKEY_CURRENT_USER\Software\Classes\vlc]
+
+[-HKEY_CURRENT_USER\Software\Classes\bingetovlc]
