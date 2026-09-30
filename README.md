@@ -18,6 +18,22 @@ no re-encoding, no CPU on the server.
 VLC plays them back-to-back from a temporary playlist, so a whole season binge is
 one click.
 
+## Verified, not assumed
+
+| Claim | How it was checked |
+|---|---|
+| The stream URL is a byte-exact passthrough with no transcode | Byte-range request to a live Emby 4.10.0.40 server: `206`, `video/x-matroska`, `Content-Range: bytes 0-16383/3500835068`, EBML magic `1a45dfa3` |
+| The queue order, de-duplication and Virtual-item filtering are right | The built userscript driven in a real headless Chromium against a stubbed Emby API: season → 28 ordered episodes, series → 28, movie → 1, episode → 1, rest-of-season → 26, whole-season-from-here → 28 with `start=3` |
+| The Windows handler writes the intended playlist | `tools/windows/selftest.ps1` under PowerShell: 9/9 checks — the 7 golden vectors plus two playlist-injection cases |
+| Three independent implementations agree | The JavaScript, the Python reference decoder and the PowerShell handler produce byte-identical M3U for all 7 golden vectors |
+| The registry changes are reversible | `install.ps1 -DryRun` prints the exact `HKCU` operations and writes nothing; a pre-existing scheme key is exported with `reg export` before it is overridden |
+| A hostile URL cannot add lines to the playlist | A forged payload is refused (`exit 3`), and pushed past validation it still yields exactly 3 lines with 1 `#EXTINF` |
+
+**Not verified:** an actual click-to-VLC launch on a real Windows desktop. That needs a
+Windows machine with VLC installed, and is the one step this project cannot test from a
+Linux CI runner. Everything up to the `vlc.exe` invocation is asserted; the invocation
+itself is not.
+
 ## Why it works (and why it is not transcoded)
 
 Every Emby item has a file endpoint that ignores the streaming pipeline entirely:
