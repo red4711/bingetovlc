@@ -25,9 +25,10 @@ one click.
 | The stream URL is a byte-exact passthrough with no transcode | Byte-range request to a live Emby 4.10.0.40 server: `206`, `video/x-matroska`, `Content-Range: bytes 0-16383/3500835068`, EBML magic `1a45dfa3` |
 | The queue order, de-duplication and Virtual-item filtering are right | The built userscript driven in a real headless Chromium against a stubbed Emby API: season → 28 ordered episodes, series → 28, movie → 1, episode → 1, rest-of-season → 26, whole-season-from-here → 28 with `start=3` |
 | A whole season fits in a single click | 28 episodes produce a **1,584-byte** URI as ids. The same queue as full stream URLs was **5,471 bytes**, over the ~2046-character cap Windows applies to an external-protocol URI — that version would have failed silently on Windows (Chrome shows its prompt, then nothing happens). Measured in the browser test and pinned by unit tests |
-| The Windows handler writes the intended playlist | `tools/windows/selftest.ps1` under PowerShell: 10/10 checks — 8 golden vectors plus two playlist-injection cases |
-| Three independent implementations agree | JavaScript, Python and PowerShell produce byte-identical M3U for all 8 golden vectors |
-| The registry changes are reversible | `install.ps1 -DryRun` prints the exact `HKCU` operations and writes nothing; a pre-existing scheme key is exported with `reg export` before it is overridden |
+| The Windows handler writes the intended playlist | Two independent implementations are asserted in CI against the same 8 golden vectors plus a playlist-injection case: the native exe (`tools/windows/selftest-launcher.ps1`) and the PowerShell handler (`tools/windows/selftest.ps1`) |
+| Three independent implementations agree | JavaScript, Python and the Windows handler produce byte-identical M3U for all 8 golden vectors |
+| The registered command line is not a script-host invocation | The default handler is `bingetovlc-handler.exe`, registered directly. The `powershell.exe -NoProfile … -File` form that antivirus heuristics flagged on a reporter's machine is no longer the default (`-Handler powershell` keeps it as an alternative) |
+| The registry changes are reversible | `-DryRun` prints the exact `HKCU` operations and writes nothing; whichever handler registers, a pre-existing scheme key is exported with `reg export` to `%LOCALAPPDATA%\bingetovlc\backup` before it is overridden, and restored on uninstall |
 | A hostile URL cannot add lines to the playlist | A forged payload is refused (`exit 3`), and pushed past validation it still yields exactly 3 lines with 1 `#EXTINF` |
 
 **Not verified:** an actual click-to-VLC launch on a real Windows desktop. That needs a
@@ -76,27 +77,47 @@ That is all the browser needs: the script uses the Emby web client's own
 ### 2. The `vlc://` handler (Windows)
 
 Browsers cannot register custom URI schemes, so `vlc://` has to be registered in
-Windows once. In PowerShell:
+Windows once.
+
+**The default handler is a native executable, and needs no PowerShell.**
+Download `bingetovlc-handler.exe` (the `bingetovlc-handler-windows-x86_64`
+artefact from the latest CI run, or a release), then run:
+
+```bat
+bingetovlc-handler.exe --install
+```
+
+Double-clicking it does the same and confirms with a message box. It registers
+`vlc://` **for the current user only** (HKCU) so a machine-wide handler installed
+by something else is not damaged, also registers `bingetovlc://` as a
+collision-free alias, auto-detects VLC (`Program Files`, `Program Files (x86)` or
+the `HKLM\SOFTWARE\VideoLAN\VLC` key), backs up any pre-existing scheme key
+first, and restores it on `--uninstall`.
+
+The exe launches `vlc.exe` directly: the registered command line is
+`"C:\...\bingetovlc-handler.exe" "%1"`, with **no script host in the runtime
+path**. That is the point of it — the previous
+`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden … -File …` form is
+exactly the command-line signature antivirus heuristics flag, and on the machine
+that reported it the handler never ran. The exe is **unsigned**, so Windows
+Defender / SmartScreen may inspect or prompt the first time it runs; the source
+(`tools/windows/launcher.c`) and the CI build that produced the artefact are both
+published, so you can verify or rebuild it rather than trust a download.
+
+Prefer a helper (it delegates to the exe) or want the PowerShell handler instead:
 
 ```powershell
 git clone https://github.com/red4711/bingetovlc.git
 cd bingetovlc\tools\windows
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1                     # -Handler auto -> the exe when present
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Handler powershell # the script handler instead
 ```
-
-The installer
-
-* finds VLC (`Program Files`, `Program Files (x86)` or the `HKLM\SOFTWARE\VideoLAN\VLC` key),
-* registers `vlc://` **for the current user only** (HKCU), so a machine-wide
-  handler installed by something else is not damaged,
-* also registers `bingetovlc://` as a collision-free alias,
-* backs up any pre-existing scheme key first, and restores it on `-Uninstall`.
 
 Verify, then undo:
 
-```powershell
-powershell -File .\install.ps1 -Diagnostics   # shows VLC path + registration state
-powershell -File .\install.ps1 -Uninstall     # restores the previous state
+```bat
+bingetovlc-handler.exe --diagnostics          :: VLC path + registration state
+bingetovlc-handler.exe --uninstall            :: restores the previous state
 ```
 
 The first time you click **Play in VLC**, Chrome asks for permission to open an
@@ -165,6 +186,8 @@ queue travels as a single argument. Full format: [`docs/SPEC.md`](docs/SPEC.md).
   diverges (`/Users/Me`, different stream endpoints)
 * VLC 3.0.x on Windows 10/11
 * Chrome/Edge/Brave/Firefox with Tampermonkey
+* The native handler is a standalone `.exe` and needs nothing else; rebuilding it
+  from source needs only [Zig 0.13.0](https://ziglang.org/download/0.13.0/)
 
 ## Documentation
 
@@ -185,9 +208,10 @@ node --test "tests/unit/**/*.test.mjs"   # unit tests (no dependencies)
 node --test "tests/e2e/**/*.test.mjs"    # end-to-end: fake Emby server + real Chrome
 ```
 
-The tests, the reference Python decoder and the PowerShell handler must agree on
+The tests, the reference Python decoder and the Windows handlers must agree on
 the same conformance vectors — that is what keeps "the playlist plays the wrong
-episodes" from ever shipping.
+episodes" from ever shipping. Both the native exe and the PowerShell handler are
+asserted against those vectors in CI.
 
 ## License
 

@@ -165,8 +165,18 @@ There is no background process. A per-user registry key registers the schemes,
 and the handler runs only for the fraction of a second needed to write the
 playlist and start VLC.
 
+The handler is the native executable `tools/windows/bingetovlc-handler.exe`
+(built from `tools/windows/launcher.c`). It replaced the earlier PowerShell
+handler, whose registered command line — `powershell.exe -NoProfile
+-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File …` — is exactly
+the signature antivirus heuristics flag; on the reporting machine it was blocked,
+so the handler never ran. The exe has **no script host in the runtime path** and
+can register itself (`bingetovlc-handler.exe --install`). The PowerShell handler
+(`tools/windows/bingetovlc-handler.ps1`) stays in the tree as an alternative
+implementation of the same contract.
+
 ```
- userscript (browser)        Windows registry           handler (PowerShell)              VLC
+ userscript (browser)        Windows registry           handler (native exe)              VLC
       │                            │                           │                          │
       │ user clicks "Play in VLC"   │                           │                          │
       │ build payload (JSON)        │                           │                          │
@@ -196,8 +206,9 @@ playlist and start VLC.
   found, `5` write failure. Every run is logged to
   `%LOCALAPPDATA%\bingetovlc\logs\handler.log`.
 * The temporary `.m3u` lives under `%LOCALAPPDATA%\bingetovlc\playlists\` and is
-  deleted when VLC exits, unless `-KeepPlaylist` is used. See
-  [`security.md`](security.md) for why that timing matters.
+  deleted when VLC exits, unless `--keep-playlist` (the exe) or `-KeepPlaylist`
+  (the script) is used. See [`security.md`](security.md) for why that timing
+  matters.
 
 ### 3.1 Why no background service
 
@@ -205,7 +216,8 @@ A service or a localhost port would add a process that runs permanently, a port
 to defend, a lifecycle to supervise and an install-time privilege question.
 None of that buys anything the registry already provides: Windows launches the
 handler on demand, it does the work, it exits. The handler is on the clock for
-one file write and one process spawn.
+one file write and one process spawn — and being a native exe, it starts without
+a script-host interpreter in that window at all.
 
 ### 3.2 Choosing URI vs download
 

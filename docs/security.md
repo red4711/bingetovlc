@@ -17,8 +17,8 @@ pretending otherwise would be worse than documenting it.
 
 * The temporary playlist file is written to a per-user directory and deleted
   when VLC exits.
-* The Windows protocol registration is per-user (`HKCU`) and the installer backs
-  up any pre-existing key before overriding it.
+* The Windows protocol registration is per-user (`HKCU`) and whichever handler
+  registers backs up any pre-existing key before overriding it.
 * A payload is parsed as JSON and can only ever become a playlist file. It is
   data, not code; there is no shell, no `eval`, no command execution path from
   payload contents.
@@ -37,6 +37,12 @@ pretending otherwise would be worse than documenting it.
   paths exercised so far it does not log item URLs at all. It has not been
   exercised on Windows for every failure path, so review a log before pasting it
   anywhere (see §3).
+* **The native handler is an unsigned binary.** It is built from the published
+  source (`tools/windows/launcher.c`) with a pinned toolchain in CI, but it
+  carries no code signature, so Windows Defender / SmartScreen may inspect it or
+  prompt on the first run. A signature is not required for the handler to work;
+  it is a trust signal the project does not yet have, and one you can replace by
+  reading or rebuilding the source.
 * **DRM-protected content.** Out of scope by design; see §8.
 * **Emby server misconfiguration.** Out of scope; see [`../SECURITY.md`](../SECURITY.md).
 
@@ -97,7 +103,8 @@ hand or when the logged-in account happens to be an administrator.
 
 * **Location:** `%LOCALAPPDATA%\bingetovlc\playlists\bingetovlc-<utcstamp>-<rand>.m3u`
 * **Lifetime:** the handler writes it, launches VLC, waits for VLC to exit, then
-  deletes it — unless `-KeepPlaylist` is passed, in which case it is left on
+  deletes it — unless `--keep-playlist` (the exe) or `-KeepPlaylist` (the script)
+  is passed, in which case it is left on
   disk deliberately.
 * **Contents:** the full playlist, including the token in every URL.
 
@@ -111,8 +118,8 @@ not indefinitely.
 
 * **While VLC is playing, the file exists.** Anything running as your user
   during that window can read it — including the token.
-* **`-KeepPlaylist` leaves it on disk.** Do not use it on a shared machine, or
-  delete the file afterwards.
+* **`--keep-playlist` / `-KeepPlaylist` leaves it on disk.** Do not use it on a
+  shared machine, or delete the file afterwards.
 * **The token is still in VLC's own memory, window title, history and logs.**
   This document does not claim anything about VLC's internals; that is VLC's
   behaviour, **not verified** here.
@@ -159,8 +166,14 @@ HKCU\Software\Classes\vlc
 HKCU\Software\Classes\bingetovlc
 ```
 
-with `URL Protocol`, `DefaultIcon`, and `shell\open\command`. `HKCU` means **per
-user**: the registration affects only the current Windows account.
+with `URL Protocol`, `DefaultIcon`, and a `shell\open\command` that runs the
+**native handler** `bingetovlc-handler.exe` directly
+(`"…\bingetovlc-handler.exe" "%1"`). There is no script host in the runtime
+path — that is the whole point, because the earlier
+`powershell.exe -NoProfile … -File …` command line is what antivirus heuristics
+flag. The PowerShell handler is available with `-Handler powershell`, but it is
+not the default. `HKCU` means **per user**: the registration affects only the
+current Windows account.
 
 ### 4.1 Why per-user
 
@@ -178,8 +191,8 @@ Many VLC installs register a machine-level `vlc://` scheme. If another program
 owns that scheme, bingetovlc's per-user key should shadow it for the current
 user only — the machine-wide registration is not damaged.
 
-**The installer backs up first.** Before overriding any pre-existing scheme key
-it writes a backup to:
+**Whichever handler registers backs up first.** Before overriding any
+pre-existing scheme key it writes a backup to:
 
 ```
 %LOCALAPPDATA%\bingetovlc\backup\<scheme>-<utcstamp>.reg
@@ -243,8 +256,8 @@ At worst: **an unauthenticated queue.**
   the site's permissions, or to use the `.m3u` download path instead, which never
   fires the scheme.
 * Use a browser profile, or a browser, that you keep for trusted sites only.
-* Uninstall the scheme (`install.ps1 -Uninstall`) if you no longer want any page
-  to be able to reach VLC this way.
+* Uninstall the scheme (`bingetovlc-handler.exe --uninstall`) if you no longer
+  want any page to be able to reach VLC this way.
 
 ---
 
@@ -279,10 +292,13 @@ Three layers now prevent it:
 | `payload.js` `assertSafeUrl()` | rejects any item URL containing whitespace or a control character, in both `build()` and `validate()` — so the userscript cannot create one and a hand-crafted URI cannot smuggle one in |
 | `m3u.js` `safeUrl()` | strips control characters while serialising, for payloads assembled by other code |
 | `tools/windows/bingetovlc-handler.ps1` | `Test-SafeUrl` applies the same rule (exit 3 = bad payload), and `ConvertToSafeUrl` strips control characters before writing the file |
+| `tools/windows/launcher.c` (the native handler) | validates each item URL the same way and exits 3 on a violation; the serialiser strips control characters as a second layer |
 | `tools/playlist/conformance.py` | the Python reference decoder rejects the same input, so all implementations agree |
 
-Verified, not assumed. `tools/windows/selftest.ps1` now runs two injection cases
-alongside the seven M3U vectors, and both pass:
+Verified, not assumed. Both handler self-tests run an injection case alongside
+the eight M3U vectors: `tools/windows/selftest.ps1` for the PowerShell handler
+(which also asserts the serialiser line count) and
+`tools/windows/selftest-launcher.ps1` for the native exe. Both pass:
 
 * a URI whose payload URL contains `CR LF` + `#EXTINF:-1,INJECTED` +
   `file:///etc/passwd` is **refused** (handler exit 3);

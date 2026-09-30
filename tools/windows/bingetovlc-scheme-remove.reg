@@ -6,9 +6,10 @@ Windows Registry Editor Version 5.00
 ;   reg import bingetovlc-scheme-remove.reg
 ;
 ; NOTE: this DROPS the keys. It does not restore a handler that bingetovlc
-; overrode. If you want the previous handler back, use:
+; overrode. If you want the previous handler back, use either of:
+;   bingetovlc-handler.exe --uninstall     (native, no script host needed)
 ;   powershell -ExecutionPolicy Bypass -File uninstall.ps1
-; which restores a backed-up key when one exists under
+; which restore a backed-up key when one exists under
 ; %LOCALAPPDATA%\bingetovlc\backup.
 
 [-HKEY_CURRENT_USER\Software\Classes\vlc]

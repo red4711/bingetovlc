@@ -119,7 +119,8 @@ Rules:
   payload carries them (`opts.referrer` / `opts.ua`, used by the generic
   adapter, never by Emby).
 * File written to `%LOCALAPPDATA%\bingetovlc\playlists\bingetovlc-<utcstamp>-<rand>.m3u`.
-  It contains an API token, so it is deleted when VLC exits (unless `-KeepPlaylist`).
+  It contains an API token, so it is deleted when VLC exits (unless
+  `--keep-playlist` / `-KeepPlaylist`).
 
 ## 4. Emby API contract (verified against a live 4.10.0.40 server)
 
@@ -243,37 +244,70 @@ resolveSession(pageWindow)            -> {server, token, uid} | null
 
 ## 6. Windows handler contract
 
-`tools/windows/bingetovlc-handler.ps1`
+The handler is implemented twice against one contract. The **native executable**
+(`tools/windows/bingetovlc-handler.exe`, built from `tools/windows/launcher.c`)
+is the default; the **PowerShell script**
+(`tools/windows/bingetovlc-handler.ps1`) is the alternative implementation. Both
+satisfy the rules below and the same `tests/fixtures/vectors.json`.
 
-* Input: the full URI as `$args[0]` (registry passes `"%1"`).
+`tools/windows/bingetovlc-handler.exe`
+
+* The registered command line is `"<absolute path to the exe>" "%1"` — there is
+  **no script host in the runtime path**. That is deliberate: the previous
+  `powershell.exe -NoProfile … -ExecutionPolicy Bypass -File …` command line is
+  exactly what antivirus/EDR heuristics flag, and it was blocked on a machine
+  that reported the handler never running.
 * Accepts `vlc://`, `bingetovlc://`; path `open`; query `d` or `url`+`t`.
 * Exit codes: `0` success, `2` malformed URI, `3` bad payload, `4` VLC not found,
   `5` write failure. Always logged to `%LOCALAPPDATA%\bingetovlc\logs\handler.log`.
-* `-SelfTest`: decode a URI argument and print the exact M3U to stdout without
-  launching VLC (this is what CI asserts against the conformance vectors).
-* `-Diagnostics`: interactive report (VLC path, scheme registration, last error).
+* `--selftest "<uri>"` decodes the URI and prints the exact M3U to stdout without
+  launching VLC (this is what CI asserts against the conformance vectors); it
+  never touches the registry and also builds/runs on Linux for testing.
+* `--diagnostics` prints VLC path, both schemes' registration state, the playlist
+  directory, recent log lines and the current user.
+* `--install [--scheme vlc,bingetovlc]` registers per-user in `HKCU`, backs up any
+  pre-existing scheme key first, and confirms with a message box when
+  double-clicked. This is why the documented install path needs **no PowerShell**.
+* `--uninstall` restores the pre-existing key from the newest backup, else deletes
+  it. `--keep-playlist`, `--vlc <path>` and `--help` also exist.
 
-`tools/windows/install.ps1 [-Uninstall] [-DryRun] [-Scheme vlc,bingetovlc] [-VlcPath X]`
+`tools/windows/bingetovlc-handler.ps1` implements the same contract:
 
+* Input: the full URI as `$args[0]` (registry passes `"%1"`).
+* `-SelfTest` is the script's `--selftest`; `-Diagnostics` is its `--diagnostics`.
+
+`tools/windows/install.ps1 [-Uninstall] [-DryRun] [-Diagnostics] [-Handler auto|exe|powershell] [-Scheme vlc,bingetovlc] [-VlcPath X]`
+
+* `-Handler auto` (the default) uses the native exe when
+  `bingetovlc-handler.exe` sits beside the script, and otherwise the PowerShell
+  handler. In exe mode it **delegates** to `bingetovlc-handler.exe --install`
+  (`--uninstall`, `--diagnostics`); with `-Handler powershell` it registers the
+  script instead.
 * Backs up any pre-existing scheme key to
   `%LOCALAPPDATA%\bingetovlc\backup\<scheme>-<utcstamp>.reg` before overriding it,
-  and restores it on `-Uninstall`.
+  and restores it on `-Uninstall`. (In exe mode the exe performs that `reg.exe
+  export` backup itself.)
 * Registers `HKCU\Software\Classes\<scheme>` with `URL Protocol`, `DefaultIcon`
   and `shell\open\command`.
 * Detects VLC automatically (`%ProgramFiles%\VideoLAN\VLC\vlc.exe`,
   `%ProgramFiles(x86)%...`, `HKLM\SOFTWARE\VideoLAN\VLC`), and can be told
   explicitly.
-* `-DryRun` prints the exact registry operations without touching the registry.
+* `-DryRun` prints the exact registry operations — or, in exe mode, the exact
+  native command it would run — without touching the registry.
 
 ## 7. Conformance vectors
 
 `tests/fixtures/vectors.json` holds `{payload, base64, m3u, uri}` tuples.
-Three independent implementations must agree on them:
+Independent implementations must agree on them:
 
 1. JavaScript (`src/core/*`, tested by `node --test`)
 2. Python (`tools/playlist/conformance.py`, the reference decoder)
-3. PowerShell (`tools/windows/bingetovlc-handler.ps1 -SelfTest`, asserted on
-   `windows-latest` in CI)
+3. Native C (`tools/windows/launcher.c` → `bingetovlc-handler.exe --selftest`,
+   asserted on `windows-latest` in CI by `tools/windows/selftest-launcher.ps1` —
+   the default handler)
+4. PowerShell (`tools/windows/bingetovlc-handler.ps1 -SelfTest`, asserted on
+   `windows-latest` in CI by `tools/windows/selftest.ps1` — the alternative
+   handler)
 
 Divergence between any two is a release blocker — the bug class this catches is
 "playlist plays the wrong episodes on someone else's machine".

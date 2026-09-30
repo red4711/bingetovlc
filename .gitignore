@@ -12,3 +12,8 @@ __pycache__/
 Thumbs.db
 tests/e2e/tmp/
 tests/e2e/artifacts/
+
+# The native Windows handler is built (tools/windows/build-launcher.sh, or CI)
+# and published as a release artefact, not committed. The source in
+# tools/windows/launcher.c is what makes it rebuildable and auditable.
+tools/windows/bingetovlc-handler.exe

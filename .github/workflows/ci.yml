@@ -4,7 +4,11 @@
 #   unit              the codec / ordering / m3u contract, on two Node majors
 #   vectors           the golden vectors still describe this source (JS side)
 #   python-conformance the reference decoder agrees with the vectors
-#   windows-handler   the real PowerShell handler agrees with the vectors
+#   windows-handler   the PowerShell handler agrees with the vectors (it is the
+#                     alternative implementation, not the default)
+#   windows-native-handler the native handler is built with the pinned Zig
+#                     toolchain and agrees with the same vectors; the exe is
+#                     uploaded as the release artefact
 #   dist-fresh        the committed userscript matches src/ (a stale dist must
 #                     never ship, because Tampermonkey installs it straight
 #                     from the repository)
@@ -97,6 +101,69 @@ jobs:
         run: |
           powershell -File tools/windows/selftest.ps1 -VectorsPath tests/fixtures/vectors.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # The native handler is the DEFAULT runtime path. The registered command line
+  # runs bingetovlc-handler.exe directly, with no script host for antivirus
+  # heuristics to flag (that blocked the previous PowerShell command line on a
+  # real machine). It is asserted against the same vectors the PowerShell
+  # handler is, so the two implementations of the SPEC section 6/7 contract
+  # cannot drift, and the tested exe is the one uploaded as the release artefact.
+  windows-native-handler:
+    name: windows-native-handler
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned Zig toolchain (0.13.0)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'zig-0.13.0.zip'
+          $dir = Join-Path $env:RUNNER_TEMP 'zig-0.13.0'
+          Invoke-WebRequest -Uri 'https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $zig = (Get-ChildItem -Path $dir -Recurse -Filter 'zig.exe' | Select-Object -First 1).FullName
+          if (-not $zig) { throw 'zig.exe was not found in the downloaded archive' }
+          "ZIG_EXE=$zig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & $zig version
+
+      # The same command tools/windows/build-launcher.sh runs locally; Zig is the
+      # only compiler needed, and 0.13.0 is the pinned version.
+      - name: Build the native handler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & $env:ZIG_EXE cc -target x86_64-windows-gnu -static -Os -s -o tools/windows/bingetovlc-handler.exe tools/windows/launcher.c
+          if ($LASTEXITCODE -ne 0) { throw "zig cc failed with exit $LASTEXITCODE" }
+
+      - name: The build produced a PE executable
+        shell: pwsh
+        run: |
+          $exe = 'tools/windows/bingetovlc-handler.exe'
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $exe).Path)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "$exe is not a PE image (no MZ header)"
+          }
+          Write-Host ("built {0} ({1} bytes)" -f $exe, $bytes.Length)
+
+      # The exe is the only place a real user's playlist can be silently
+      # corrupted on the way to VLC, so it is asserted against the same vectors
+      # as the PowerShell handler (see selftest.ps1).
+      - name: Vector conformance against the native exe
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools/windows/selftest-launcher.ps1 -ExePath tools/windows/bingetovlc-handler.exe -VectorsPath tests/fixtures/vectors.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload the native handler
+        uses: actions/upload-artifact@v4
+        with:
+          name: bingetovlc-handler-windows-x86_64
+          path: tools/windows/bingetovlc-handler.exe
+          if-no-files-found: error
+          retention-days: 14
 
   dist-fresh:
     name: dist-fresh

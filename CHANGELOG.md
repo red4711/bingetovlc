@@ -10,6 +10,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the payload version is bumped when they do. Until 1.0, pin to a commit or tag
 > rather than assuming compatibility across releases.
 
+## [0.3.0] - 2026-09-30
+
+### Changed
+
+* **The Windows protocol handler is now a native executable, and it is the
+  default.** `tools/windows/bingetovlc-handler.exe` (built from
+  `tools/windows/launcher.c`) launches `vlc.exe` directly, and the registered
+  command line is just `"…\bingetovlc-handler.exe" "%1"` — **no script host in
+  the runtime path**. The previous default,
+  `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy
+  Bypass -File …`, is precisely the command-line shape antivirus/EDR heuristics
+  flag; on a machine that reported "clicking *Play in VLC* does nothing", it was
+  blocked and the handler never ran. The exe removes that signature from the
+  runtime path entirely.
+* **Installing needs no PowerShell.** `bingetovlc-handler.exe --install`
+  registers the `vlc` and `bingetovlc` schemes per-user itself, and `--uninstall`
+  restores any key it overrode — so a machine whose PowerShell is blocked can
+  still install the handler. `tools/windows/install.ps1` now takes
+  `-Handler auto|exe|powershell` (default `auto` = the exe when it sits beside the
+  script) and delegates to `bingetovlc-handler.exe --install` / `--uninstall` /
+  `--diagnostics`. `-Uninstall`, `-DryRun`, `-Diagnostics` and `-Scheme` are
+  unchanged, and the `reg.exe export` backup-before-override behaviour is kept by
+  both handlers. The `.reg` templates now point at the exe.
+* **The PowerShell handler is kept as an alternative implementation** of the same
+  contract (`docs/SPEC.md` §3/§6/§7), selected with `-Handler powershell`. It is
+  no longer the default.
+
+### Added
+
+* `tools/windows/launcher.c` and `tools/windows/build-launcher.sh` — the native
+  handler's source and its build (pinned **Zig 0.13.0**; Zig is the only compiler
+  needed).
+* `tools/windows/selftest-launcher.ps1` — the exe's conformance entry point,
+  per-vector PASS/FAIL against `tests/fixtures/vectors.json`, non-zero exit on
+  mismatch.
+* A `windows-native-handler` CI job: builds the exe on `windows-latest` with Zig
+  0.13.0, asserts it against the same vectors the PowerShell handler uses, and
+  uploads it as the `bingetovlc-handler-windows-x86_64` artefact.
+
+### Notes
+
+* The exe is **unsigned**. Windows Defender / SmartScreen may inspect it or prompt
+  on first run; the source and the CI build that produced the artefact are
+  published so the binary can be verified or rebuilt rather than trusted.
+* The exe's `--selftest` path is Windows-API free (no registry, no VLC launch) and
+  also builds on Linux, so the decode/M3U contract is testable off Windows.
+
 ## [0.2.1] - 2026-09-30
 
 ### Fixed
@@ -119,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the client's `ApiClient` global to appear is the least certain part of the
   design (see [`docs/how-it-works.md`](docs/how-it-works.md) §10).
 
+[0.3.0]: https://github.com/red4711/bingetovlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/red4711/bingetovlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/red4711/bingetovlc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/red4711/bingetovlc/releases/tag/v0.1.0

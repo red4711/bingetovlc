@@ -13,11 +13,14 @@ Two things to have open while diagnosing:
 * **The Preview panel** — shows the exact queue (order, titles, runtimes, total).
   Many "wrong episode" reports are answerable here before touching anything else.
 
-The single most useful command is the installer's own diagnostics:
+The single most useful command is the native handler's own diagnostics (no
+PowerShell required):
 
-```powershell
-powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration state
+```bat
+bingetovlc-handler.exe --diagnostics          :: VLC path + scheme registration state
 ```
+
+The helper `install.ps1 -Diagnostics` runs the same report via the exe.
 
 ---
 
@@ -37,7 +40,7 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 | Wrong episode plays, or the queue is short | URI truncation, or an ordering/filter surprise | §6 |
 | VLC opens the playlist but stops after one episode | Single-entry playlist, or the `one` option interfering | §7 |
 | VLC was already open and nothing happens | `one` (reuse instance) option; new queue went to the existing window | §8 |
-| Handler never runs; AV or Windows blocks PowerShell | Execution policy or antivirus | §9 |
+| Handler never runs; AV or Windows blocks the handler | The old script-host command line, or antivirus quarantining the exe | §9 |
 | The scheme is hijacked by another application | Machine-level `vlc://` owner | §10 |
 | A big series downloads an `.m3u` instead of firing the URI | Queue exceeded the URI budget — intended | §11 |
 | Subtitles or an audio track missing | Not the container; choice inside VLC | §12 |
@@ -53,16 +56,16 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 the browser. Possible reasons: the installer was never run; it was run for a
 different user (the keys are per-user, `HKCU`); or it was uninstalled.
 
-**Fix.**
+**Fix.** Register the native handler (no PowerShell needed) and confirm it:
 
-```powershell
-cd bingetovlc\tools\windows
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-powershell -File .\install.ps1 -Diagnostics     # confirm the registration is present
+```bat
+bingetovlc-handler.exe --install
+bingetovlc-handler.exe --diagnostics
 ```
 
-`-Diagnostics` prints the VLC path and the scheme registration state. If it
-reports the scheme as absent for your account, re-run the install step. See
+`--diagnostics` prints the VLC path and the scheme registration state. If it
+reports the scheme as absent for your account, re-run the install step. (The
+helper `install.ps1` delegates to the same exe when it sits beside it.) See
 [`security.md`](security.md) §4 for why the registration is per-user.
 
 ### 2.2 Chrome asks every time
@@ -116,14 +119,17 @@ the last entry and its exit code:
 | `5` | write failure | the playlists directory is not writable |
 
 If there is **no new log entry**, the handler never ran → §9 (antivirus,
-execution policy) or §2 (scheme not registered). To exercise the handler without
+quarantine) or §2 (scheme not registered). To exercise the handler without
 VLC, run its self-test:
 
-```powershell
-powershell -File .\tools\windows\bingetovlc-handler.ps1 -SelfTest "vlc://open?d=..."
+```bat
+bingetovlc-handler.exe --selftest "vlc://open?d=..."
 ```
 
-`-SelfTest` decodes the URI and prints the exact M3U to stdout without launching
+(the PowerShell handler has the same check:
+`bingetovlc-handler.ps1 -SelfTest "vlc://open?d=..."`)
+
+`--selftest` decodes the URI and prints the exact M3U to stdout without launching
 VLC. If that fails, the problem is in the payload path; if it succeeds, the
 problem is in the launch path.
 
@@ -262,7 +268,8 @@ to prevent it.
 
 **Fix.** Confirm the queue length in **Preview**. If Preview shows N episodes
 and VLC shows one, inspect the temporary playlist file (start the handler with
-`-KeepPlaylist`, then open the generated `.m3u` from
+`--keep-playlist` (the exe; `-KeepPlaylist` for the script), then open the
+generated `.m3u` from
 `%LOCALAPPDATA%\bingetovlc\playlists\`): it should contain one `#EXTINF` line and
 one URL per episode. If it does, the file is correct and the issue is VLC
 playback; if it does not, collect the file with tokens stripped (§13).
@@ -286,29 +293,61 @@ nothing happened — the queue went to the existing window.
 
 ---
 
-## 9. Antivirus or Windows blocks the PowerShell handler
+## 9. Antivirus or Windows blocks the handler
 
-**Cause.** The handler is a PowerShell script invoked through the registry. Two
-things can stop it before it writes a log entry: the effective execution policy
-on the machine/account, and antivirus or Windows Defender heuristics that block
-script-based protocol handlers.
+**This is the report the native exe exists to answer.** The previous default was
+a PowerShell script invoked through the registry with the command line
+`powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden
+-ExecutionPolicy Bypass -File …` — precisely the command-line signature
+antivirus / EDR heuristics flag. On the machine that reported a dead handler, it
+was blocked, so **no log entry was ever written**.
 
-**Fix.**
+**Fix — use the native handler (the default; no script host).** It launches
+`vlc.exe` directly, and the registered command line is just
+`"…\bingetovlc-handler.exe" "%1"`:
 
-1. Confirm the function first, independent of the registry:
+```bat
+bingetovlc-handler.exe --install
+bingetovlc-handler.exe --diagnostics
+```
+
+If the scheme is still registered to `powershell.exe`, re-run
+`bingetovlc-handler.exe --install` (or `install.ps1`, which now defaults to the
+exe) to replace it, then confirm:
+
+```powershell
+reg query "HKCU\Software\Classes\vlc\shell\open\command"
+```
+
+1. Confirm the handler works, independent of the registry:
+
+   ```bat
+   bingetovlc-handler.exe --selftest "vlc://open?d=..."
+   ```
+
+   `--selftest` decodes the URI and prints the playlist; it launches nothing and
+   touches no registry key. If this fails, the problem is the payload, not a
+   block.
+
+2. **The exe is unsigned.** Windows Defender / SmartScreen may inspect it, or ask
+   before the first run, because it is not code-signed. That is expected, not a
+   fault. The source (`tools/windows/launcher.c`) and the CI build that produced
+   the artefact are published, so you can confirm or rebuild the exact binary
+   instead of trusting a download.
+
+3. If antivirus is quarantining the exe, allow it in the AV product's log. If it
+   is blocking the *script* handler, switch to the exe; the script path also
+   needs `-ExecutionPolicy Bypass`.
+
+4. If you still want the PowerShell handler, its own test is:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\tools\windows\bingetovlc-handler.ps1 -SelfTest "vlc://open?d=..."
    ```
 
-   If this fails, the block is on the handler itself → execution policy or AV.
-2. Re-run the installer command with `-ExecutionPolicy Bypass` (as shown in the
-   [README](../README.md)).
-3. If antivirus is quarantining or blocking it, add an exclusion for the handler
-   script path, or allow the operation in the AV product's log.
-4. Check the handler log: if a click produces **no new entry**, the handler never
-   started → §9; if it logs `4`, VLC was not found → re-run the installer with
-   `-VlcPath "C:\path\to\vlc.exe"`.
+5. Check the handler log: if a click produces **no new entry**, the handler never
+   started → this section; if it logs `4`, VLC was not found → re-run the
+   installer with `-VlcPath "C:\path\to\vlc.exe"`.
 
 ---
 
@@ -321,7 +360,7 @@ for your account only.
 
 **Fix.**
 
-* Run `-Diagnostics` to see the current registration state.
+* Run `bingetovlc-handler.exe --diagnostics` to see the current registration state.
 * Because `HKCU` registration is what bingetovlc installs, re-running the
   installer for your user re-asserts it.
 * The installer backs up any pre-existing scheme key to
@@ -399,8 +438,8 @@ than a report that says "it doesn't work". Include:
    path, or did you use the **`.m3u` download** path? They exercise different
    code.
 4. **Diagnostics output**
-   ```powershell
-   powershell -File .\install.ps1 -Diagnostics
+   ```bat
+   bingetovlc-handler.exe --diagnostics
    ```
 5. **The handler log excerpt** — the tail of
    `%LOCALAPPDATA%\bingetovlc\logs\handler.log`, including the exit code. The

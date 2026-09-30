@@ -1,15 +1,20 @@
 Windows Registry Editor Version 5.00
 
-; bingetovlc - per-user (HKCU) protocol handler template.
+; bingetovlc - per-user (HKCU) protocol handler template for the NATIVE handler.
 ;
 ; Import this file by double-clicking it, or with:
 ;   reg import bingetovlc-scheme.reg
 ;
 ; BEFORE importing, replace the placeholders below:
-;   __HANDLER_PATH__  full path to bingetovlc-handler.ps1
-;                     e.g. C:\Users\you\bingetovlc\tools\windows\bingetovlc-handler.ps1
-;   __VLC_PATH__      full path to vlc.exe
+;   __HANDLER_EXE__   full path to bingetovlc-handler.exe
+;                     e.g. C:\Users\you\bingetovlc\tools\windows\bingetovlc-handler.exe
+;   __VLC_PATH__      full path to vlc.exe (used only for the protocol icon)
 ;                     e.g. C:\Program Files\VideoLAN\VLC\vlc.exe
+;
+; The command line runs the .exe DIRECTLY: there is no script host in the
+; runtime path, which is what stops antivirus heuristics from flagging the
+; registered command (the previous `powershell.exe -NoProfile ... -File` form
+; was blocked on a real machine, so the handler never ran).
 ;
 ; .reg format notes: backslashes are doubled (\\), and embedded double quotes
 ; are escaped with a backslash (\").
@@ -18,8 +23,9 @@ Windows Registry Editor Version 5.00
 ; only and need no administrator rights. A HKCU key overrides any machine-wide
 ; handler for this user.
 ;
-; Prefer install.ps1 if you want automatic VLC detection, a .reg backup of any
-; overridden key and a safe -Uninstall.
+; Prefer `bingetovlc-handler.exe --install` (or install.ps1, which delegates to
+; it) if you want automatic VLC detection, a .reg backup of any overridden key
+; and a safe `--uninstall`.
 
 [HKEY_CURRENT_USER\Software\Classes\vlc]
 @="URL:vlc Protocol"
@@ -29,7 +35,7 @@ Windows Registry Editor Version 5.00
 @="\"__VLC_PATH__\",0"
 
 [HKEY_CURRENT_USER\Software\Classes\vlc\shell\open\command]
-@="powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"__HANDLER_PATH__\" \"%1\""
+@="\"__HANDLER_EXE__\" \"%1\""
 
 [HKEY_CURRENT_USER\Software\Classes\bingetovlc]
 @="URL:bingetovlc Protocol"
@@ -39,4 +45,4 @@ Windows Registry Editor Version 5.00
 @="\"__VLC_PATH__\",0"
 
 [HKEY_CURRENT_USER\Software\Classes\bingetovlc\shell\open\command]
-@="powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"__HANDLER_PATH__\" \"%1\""
+@="\"__HANDLER_EXE__\" \"%1\""
