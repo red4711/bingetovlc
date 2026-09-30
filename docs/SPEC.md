@@ -5,12 +5,18 @@ and the test suite. Change it only by bumping `PAYLOAD_VERSION`.
 
 ## 1. Product behaviour
 
-| Page the user is on | Handoff |
-|---|---|
-| Movie | 1-item playlist |
-| Episode | configurable: `item` (just this) / `rest-of-season` (this + the rest of its season) |
-| Season | every episode of that season, in order |
-| Series | every episode of every season, in order (season, then episode) |
+| Page the user is on | Default queue | Other scopes offered |
+|---|---|---|
+| Movie | that one file | none |
+| Episode | just that episode | rest of season, whole season, whole show |
+| Season | every episode of that season, in order | none |
+| Series | every episode of every season, in order | none |
+
+Container types (`Series`, `Season`) deliberately do **not** offer a single-item
+scope: their ids have no media sources, and asking Emby for the stream returns
+HTTP 500 (see section 4, rule 1). `normalizeScope()` always returns the first
+allowed scope for the type, and `availableScopes(type)[0]` is the default, so
+landing on a season queues the season without the user choosing anything.
 
 Everything is **direct play**: the URL handed to VLC is the original file
 byte-for-byte, no transcode, no remux, no segment re-muxing.
@@ -220,3 +226,51 @@ Three independent implementations must agree on them:
 
 Divergence between any two is a release blocker — the bug class this catches is
 "playlist plays the wrong episodes on someone else's machine".
+
+## 8. UI and test contract
+
+The end-to-end test drives the real userscript in a real browser, so the DOM
+surface and the observation hook are part of the interface, not an implementation
+detail. Renaming one of these breaks CI on purpose.
+
+| Selector | Meaning |
+|---|---|
+| `#bingetovlc-panel` | panel root |
+| `#bingetovlc-summary` | one-line description of the current queue |
+| `#bingetovlc-status` | last status or error message (class `bingetovlc-error` / `bingetovlc-warn`) |
+| `#bingetovlc-list` | the queued entries, in order |
+| `#bingetovlc-play` | queue this item and hand it to VLC |
+| `#bingetovlc-preview` | build the queue and show the URI, launch nothing |
+| `#bingetovlc-download` | save the queue as an `.m3u` |
+| `#bingetovlc-uri` | the produced URI, or a description of why a file is used instead |
+| `#bingetovlc-scope` | scope selector; its option values are the scope names |
+| `#bingetovlc-diagnostics` | copy a token-redacted report |
+| `#bingetovlc-banner` | transient outcome banner (created on demand) |
+
+Observation hook: when the page sets `window.__BINGETOVLC_TEST_MODE__ = true`
+**before the script runs**, no navigation to the custom scheme is attempted and a
+`bingetovlc:handoff` CustomEvent is dispatched on `document` instead, whose
+`detail` carries `{uri, payload, mode, reason, scheme}`. Headless Chrome cannot
+complete an external protocol launch, so this is the only way to assert the queue
+that *would* have reached VLC — and `#bingetovlc-uri` carries the same URI for a
+DOM-level assertion.
+
+Debug surface: on an Emby page the script exposes `window.bingetovlc` with
+`{version, state, refresh(), report()}`. `report()` returns the same
+token-redacted text as the Copy report button.
+
+Runtime scope defaults are asserted by the end-to-end test, live in a real
+Chromium against a stubbed Emby API:
+
+| Scenario | Asserted result |
+|---|---|
+| Season page | 28 items, `S01E01` first, `S01E28` last, Virtual episode excluded |
+| Series page | 28 items, ordered |
+| Movie page | exactly 1 item |
+| Episode page | exactly 1 item |
+| Episode, scope `rest-of-season` | 26 items, starting at that episode |
+| Episode, scope `season` | 28 items and `opts.start == 3` (1-based index of that episode) |
+
+No request URL may contain the server address twice (a regression guard: the
+first implementation produced `http://hosthttp://host/Shows/...` and queued
+nothing).
