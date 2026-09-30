@@ -29,6 +29,32 @@ export const MAX_URI_ITEMS = 60;
 
 const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
+/**
+ * A URL that reaches the playlist file must not be able to change its structure.
+ * An `.m3u` is line-oriented, so a newline inside a URL injects an extra playlist
+ * entry or `#EXTVLCOPT` line — a playlist-content injection, not code execution,
+ * but still a payload that does something other than what it says.
+ *
+ * The previous check only anchored the start of the URL (`^scheme://`), which
+ * accepted `https://host/a\nfile:///etc/passwd`. This rejects any whitespace or
+ * control character instead, at the point where a payload is built *and* where it
+ * is decoded, so a hand-crafted URI cannot get past either door. `buildM3u`
+ * strips control characters as well, for payloads assembled by other code.
+ */
+const UNSAFE_URL_CHARS = /[\u0000-\u001f\u007f\s]/;
+
+export function assertSafeUrl(url) {
+  if (typeof url !== "string" || !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) {
+    throw new Error("payload item is not an absolute URL");
+  }
+  if (UNSAFE_URL_CHARS.test(url)) {
+    throw new Error(
+      "payload item URL contains whitespace or control characters; percent-encode it instead",
+    );
+  }
+  return true;
+}
+
 /** String -> UTF-8 bytes (surrogate-pair safe). */
 export function toUtf8Bytes(text) {
   const out = [];
@@ -151,6 +177,7 @@ export function build({ source, server, title, scope, items = [], opts = {} }) {
   const normalised = items.map((item) => {
     const url = item.u || item.url;
     if (!url || typeof url !== "string") throw new Error("item is missing a url");
+    assertSafeUrl(url);
     const entry = { u: url };
     const label = item.t || item.title;
     if (label) entry.t = String(label).replace(/[\r\n]+/g, " ").trim();
@@ -205,9 +232,8 @@ export function validate(payload) {
     );
   }
   for (const item of payload.items) {
-    if (!item || typeof item.u !== "string" || !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(item.u)) {
-      throw new Error("payload item is not an absolute URL");
-    }
+    if (!item || typeof item.u !== "string") throw new Error("payload item is not an absolute URL");
+    assertSafeUrl(item.u);
   }
   return true;
 }

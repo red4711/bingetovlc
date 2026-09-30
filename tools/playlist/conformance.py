@@ -91,6 +91,11 @@ def validate(payload: dict) -> None:
         url = item.get("u") if isinstance(item, dict) else None
         if not isinstance(url, str) or "://" not in url:
             raise PayloadError(f"item {index} is not an absolute URL")
+        # An .m3u is line-oriented: a newline inside a URL would start a new line
+        # and could inject extra entries or #EXTVLCOPT lines. Rejected here, in the
+        # JavaScript validator and (as a second layer) in the serialiser.
+        if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+            raise PayloadError(f"item {index} URL contains whitespace or control characters")
     return None
 
 

@@ -62,7 +62,12 @@ Compact keys: this string travels through a command line, so every byte counts.
 ```
 
 * `items[].u` — absolute URL, already authenticated (query-param token), so VLC
-  needs no headers, no cookies and no browser session.
+  needs no headers, no cookies and no browser session. It must contain **no
+  whitespace and no control characters**: `validate()` and `build()` reject such
+  a URL, because a newline inside it would start a new line in the generated
+  playlist and could inject extra entries or `#EXTVLCOPT` lines. `buildM3u()`
+  strips control characters as a second layer, for payloads assembled elsewhere.
+  Percent-encode anything unusual rather than embedding it literally.
 * `items[].t` — display title for the playlist entry.
 * `items[].d` — duration in seconds (integer, optional).
 * `opts.fs` fullscreen, `opts.one` reuse a running VLC instance,

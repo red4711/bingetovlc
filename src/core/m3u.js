@@ -36,6 +36,17 @@ function stripQuery(url) {
   return index === -1 ? url : url.slice(0, index);
 }
 
+/**
+ * Belt and braces against playlist-structure injection: an `.m3u` is
+ * line-oriented, so a newline in a URL would start a new line and could inject
+ * extra entries or `#EXTVLCOPT` lines. `assertSafeUrl()` in payload.js rejects
+ * such payloads outright; this makes the serialiser safe for payloads built by
+ * other code (the PowerShell handler writes through the same rules).
+ */
+function safeUrl(url) {
+  return String(url == null ? "" : url).replace(/[\u0000-\u001f\u007f]/g, "");
+}
+
 export function buildM3u(payload, { includeTokens = true, newline = "\n" } = {}) {
   const opts = payload.opts || {};
   const lines = ["#EXTM3U"];
@@ -48,7 +59,7 @@ export function buildM3u(payload, { includeTokens = true, newline = "\n" } = {})
     // may be referrer-locked. Emby never needs them: its token is in the URL.
     if (opts.referrer) lines.push(`#EXTVLCOPT:http-referrer=${oneLine(opts.referrer)}`);
     if (opts.ua) lines.push(`#EXTVLCOPT:http-user-agent=${oneLine(opts.ua)}`);
-    lines.push(includeTokens ? item.u : stripQuery(item.u));
+    lines.push(includeTokens ? safeUrl(item.u) : stripQuery(safeUrl(item.u)));
   }
   return lines.join(newline) + newline;
 }
