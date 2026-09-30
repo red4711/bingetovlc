@@ -197,11 +197,85 @@ foreach ($vector in $doc.vectors) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Injection cases: a URL must never be able to add a playlist line
+# ---------------------------------------------------------------------------
+# The payload below carries a URL containing CR/LF followed by a playlist
+# directive. The handler must REJECT it outright; and even if a payload bypassed
+# validation, the serialiser must not let the injected text start a new line.
+$forgedJson = '{"v":1,"src":"injection","server":"","scope":"item","n":1,"items":[{"u":"https://host/a\r\n#EXTINF:-1,INJECTED\r\nfile:///etc/passwd","t":"bad"}]}'
+
+function ConvertTo-Base64Url {
+    param([string]$Text)
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+    $b64 = [System.Convert]::ToBase64String($bytes)
+    $b64 = $b64.TrimEnd('=')
+    $b64 = $b64.Replace('+', '-').Replace('/', '_')
+    return $b64
+}
+
+function Invoke-HandlerCapture {
+    param([string[]]$Arguments)
+    $argv = @('-NoProfile', '-NonInteractive')
+    if ($runningOnWindows) { $argv += @('-ExecutionPolicy', 'Bypass') }
+    $argv += @('-File', $HandlerPath)
+    $argv += $Arguments
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $psExe
+        $psi.Arguments = ConvertTo-CommandLineArgs $argv
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        $psi.StandardErrorEncoding = New-Object System.Text.UTF8Encoding($false)
+        $psi.CreateNoWindow = $true
+        $proc = [System.Diagnostics.Process]::Start($psi)
+        $out = $proc.StandardOutput.ReadToEnd()
+        $err = $proc.StandardError.ReadToEnd()
+        $proc.WaitForExit()
+        return @{ Exit = $proc.ExitCode; Out = $out; Err = $err }
+    } catch {
+        return @{ Exit = 99; Out = ''; Err = $_.Exception.Message }
+    }
+}
+
+$forgedUri = 'vlc://open?d=' + (ConvertTo-Base64Url $forgedJson)
+
+# Case 1: the URI form must be refused (exit 3 = bad payload, or 2 = malformed).
+$rejected = Invoke-HandlerCapture @('-SelfTest', $forgedUri)
+$total = $total + 1
+if ($rejected.Exit -ne 0) {
+    $passed = $passed + 1
+    Write-Host ('  PASS  injection-uri-rejected (handler exited ' + $rejected.Exit + ')')
+} else {
+    $failed = $failed + 1
+    $failedNames.Add('injection-uri-rejected')
+    Write-Host '  FAIL  injection-uri-rejected (the handler accepted a URL containing CR/LF)'
+}
+
+# Case 2: the serialiser itself must not let the injected text start a line.
+# 1 item, no title -> exactly 3 lines: #EXTM3U, #EXTINF, URL. Exactly one #EXTINF.
+$raw = Invoke-HandlerCapture @('-SelfTestJson', (ConvertTo-Base64Url $forgedJson))
+$total = $total + 1
+$lines = @()
+if (-not [string]::IsNullOrEmpty($raw.Out)) { $lines = @((Normalize-M3u $raw.Out) -split "`n") }
+$extinfCount = @($lines | Where-Object { $_.StartsWith('#EXTINF:') }).Count
+$injectedLine = $lines -contains '#EXTINF:-1,INJECTED'
+if ($raw.Exit -eq 0 -and $lines.Count -eq 3 -and $extinfCount -eq 1 -and -not $injectedLine) {
+    $passed = $passed + 1
+    Write-Host ('  PASS  injection-serialiser-line-count (lines=' + $lines.Count + ', extinf=' + $extinfCount + ')')
+} else {
+    $failed = $failed + 1
+    $failedNames.Add('injection-serialiser-line-count')
+    Write-Host ('  FAIL  injection-serialiser-line-count (exit=' + $raw.Exit + ', lines=' + $lines.Count + ', extinf=' + $extinfCount + ', injectedLine=' + $injectedLine + ')')
+}
+
 Write-Host ''
 if ($failed -gt 0) {
-    Write-Host ('selftest: ' + $passed + '/' + $total + ' vectors passed; FAILED: ' + ($failedNames -join ', '))
+    Write-Host ('selftest: ' + $passed + '/' + $total + ' checks passed; FAILED: ' + ($failedNames -join ', '))
     exit 1
 }
 
-Write-Host ('selftest: ' + $passed + '/' + $total + ' vectors passed')
+Write-Host ('selftest: ' + $passed + '/' + $total + ' checks passed')
 exit 0

@@ -37,6 +37,7 @@ param(
     [string]$Uri,
 
     [switch]$SelfTest,
+    [string]$SelfTestJson,
     [switch]$Diagnostics,
     [switch]$KeepPlaylist,
     [string]$VlcPath,
@@ -180,6 +181,25 @@ function Test-AbsoluteUrl {
     return [regex]::IsMatch([string]$Value, '^[A-Za-z][A-Za-z0-9+.\-]*://')
 }
 
+# Mirrors assertSafeUrl() in src/core/payload.js. An .m3u is line-oriented, so a
+# URL containing CR/LF would start a new line and could inject extra entries or
+# #EXTVLCOPT lines. The old check only anchored the start of the URL, which
+# accepted "https://host/a<CRLF>file:///etc/passwd". Rejected here, and stripped
+# defensively in Build-M3uText for payloads that bypass this validation.
+function Test-SafeUrl {
+    param([string]$Value)
+    if (-not (Test-AbsoluteUrl $Value)) { return $false }
+    return -not [regex]::IsMatch([string]$Value, '[\x00-\x1F\x7F\s]')
+}
+
+# Belt and braces for the serialiser: remove control characters from a URL so it
+# cannot change the line structure of the playlist, whatever built the payload.
+function ConvertToSafeUrl {
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    return [regex]::Replace([string]$Value, '[\x00-\x1F\x7F]', '')
+}
+
 # base64url (RFC 4648 section 5, padding stripped) -> bytes.
 # Tolerant of padding, of +/ (plain base64) and of whitespace, matching
 # base64UrlDecodeBytes() in src/core/payload.js.
@@ -260,7 +280,7 @@ function Resolve-PlaylistPayload {
 
     # Form 3: bare convenience form, scheme://<absolute-url>.
     # e.g. vlc://https://media.example.com/Videos/1/stream?Static=true&api_key=...
-    if (Test-AbsoluteUrl $rest) {
+    if (Test-SafeUrl $rest) {
         $url = $rest
         return @{ Ok = $true; Payload = (New-SimplePayload -Url $url -Title (Get-TitleFromUrl $url)) }
     }
@@ -305,8 +325,8 @@ function Resolve-PlaylistPayload {
     # Form 2: manual single item.
     if ($params.ContainsKey('url')) {
         $url = $params['url']
-        if (-not (Test-AbsoluteUrl $url)) {
-            return @{ Ok = $false; Code = $SCRIPT:EXIT_MALFORMED; Message = 'manual url parameter is not an absolute URL' }
+        if (-not (Test-SafeUrl $url)) {
+            return @{ Ok = $false; Code = $SCRIPT:EXIT_MALFORMED; Message = 'manual url parameter is not an absolute URL, or contains whitespace/control characters' }
         }
         $title = $null
         if ($params.ContainsKey('t')) { $title = $params['t'] }
@@ -340,7 +360,9 @@ function Test-PayloadShape {
 
     foreach ($item in $list) {
         $u = Get-Prop $item 'u'
-        if (-not (Test-AbsoluteUrl $u)) { return 'payload item is not an absolute URL' }
+        if (-not (Test-SafeUrl $u)) {
+            return 'payload item URL is not an absolute URL, or contains whitespace/control characters'
+        }
     }
     return $null
 }
@@ -414,7 +436,7 @@ function Build-M3uText {
             $lines.Add('#EXTVLCOPT:http-user-agent=' + (ConvertToOneLine $ua))
         }
 
-        $lines.Add([string]$url)
+        $lines.Add((ConvertToSafeUrl $url))
     }
 
     # UTF-8 text with LF line endings: join with LF, terminate with LF.
@@ -587,6 +609,28 @@ function Show-Diagnostics {
 
 if ($Help) {
     Show-Help
+    exit $SCRIPT:EXIT_OK
+}
+
+if (-not [string]::IsNullOrEmpty($SelfTestJson)) {
+    # Test-only entry point, used by selftest.ps1: decode a base64url JSON payload
+    # and print the M3U WITHOUT validation, so the serialiser's own defence
+    # (control-character stripping in Build-M3uText) can be asserted directly.
+    # It launches nothing and writes nothing, and it is unreachable from a URI.
+    try {
+        $bytes = ConvertFrom-Base64Url $SelfTestJson
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        $payload = $text | ConvertFrom-Json
+    } catch {
+        [Console]::Error.WriteLine('bingetovlc: could not parse -SelfTestJson payload: ' + $_.Exception.Message)
+        exit $SCRIPT:EXIT_PAYLOAD
+    }
+    $sample = Build-M3uText $payload
+    $sampleUtf8 = New-Object System.Text.UTF8Encoding($false)
+    $sampleBytes = $sampleUtf8.GetBytes($sample)
+    $sampleOut = [Console]::OpenStandardOutput()
+    $sampleOut.Write($sampleBytes, 0, $sampleBytes.Length)
+    $sampleOut.Flush()
     exit $SCRIPT:EXIT_OK
 }
 
