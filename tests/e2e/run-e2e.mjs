@@ -481,38 +481,57 @@ export async function runE2e({ quiet = false } = {}) {
   try {
     server = await startFakeEmby({ port: FAKE_PORT, userscriptPath });
 
-    chrome = spawn(
-      chromium,
-      [
-        "--headless=new",
-        `--remote-debugging-port=${DEBUG_PORT}`,
-        `--user-data-dir=${profileDir}`,
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--no-sandbox",
-        "--disable-extensions",
-        "--disable-background-networking",
-        "--disable-sync",
-        "--mute-audio",
-        "--remote-allow-origins=*",
-        "about:blank",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
     let chromeStderr = "";
-    chrome.stderr.on("data", (chunk) => {
-      chromeStderr = (chromeStderr + chunk.toString()).slice(-4000);
-    });
-    chrome.on("error", (error) => {
-      chromeStderr += `\nspawn error: ${error.message}`;
-    });
+    const chromeArgs = [
+      "--headless=new",
+      `--remote-debugging-port=${DEBUG_PORT}`,
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--no-sandbox",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--disable-sync",
+      "--mute-audio",
+      "--remote-allow-origins=*",
+      "about:blank",
+    ];
+    const launchChrome = () => {
+      chrome = spawn(chromium, chromeArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      chrome.stderr.on("data", (chunk) => {
+        chromeStderr = (chromeStderr + chunk.toString()).slice(-4000);
+      });
+      chrome.on("error", (error) => {
+        chromeStderr += `\nspawn error: ${error.message}`;
+      });
+    };
 
+    // A cold runner can miss the port wait: this failed once in CI with "Chrome
+    // did not expose 9331 within 20000ms" on an otherwise green commit, while the
+    // same commit passed locally. One bounded relaunch turns that environment race
+    // into a slower pass instead of a red build that has nothing to do with the
+    // change under test.
+    launchChrome();
     try {
       await waitForChrome(DEBUG_PORT, 20000);
-    } catch (error) {
-      throw new Error(`${error.message}\nChrome stderr tail:\n${chromeStderr}`);
+    } catch (firstError) {
+      const firstStderr = chromeStderr;
+      try {
+        chrome.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      chromeStderr = "";
+      launchChrome();
+      try {
+        await waitForChrome(DEBUG_PORT, 40000);
+      } catch (secondError) {
+        throw new Error(
+          `${secondError.message}\nFirst attempt: ${firstError.message}\nChrome stderr tail:\n${chromeStderr || firstStderr}`,
+        );
+      }
     }
 
     const target = await firstPageTarget(DEBUG_PORT, 10000);
