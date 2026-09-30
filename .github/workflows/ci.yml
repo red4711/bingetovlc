@@ -1,0 +1,227 @@
+# bingetovlc CI.
+#
+# Every job is a gate on something a user would notice:
+#   unit              the codec / ordering / m3u contract, on two Node majors
+#   vectors           the golden vectors still describe this source (JS side)
+#   python-conformance the reference decoder agrees with the vectors
+#   windows-handler   the real PowerShell handler agrees with the vectors
+#   dist-fresh        the committed userscript matches src/ (a stale dist must
+#                     never ship, because Tampermonkey installs it straight
+#                     from the repository)
+#   e2e               a real headless Chrome + a fake Emby server hand VLC the
+#                     right episodes, in order
+#   lint              everything parses, and no real API token is committed
+#
+# Minimum permissions: read-only. No job writes to the repository or the API.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 26]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Note: a bare directory argument ("node --test tests/unit/") is no longer
+      # accepted by the Node test runner — newer Node treats positional args as
+      # glob patterns and tries to execute the directory itself (verified on
+      # v26.7.0: exit 1, MODULE_NOT_FOUND). The quoted glob is the equivalent
+      # that works on 22 and 26.
+      - name: node --test tests/unit/
+        run: node --test "tests/unit/**/*.test.mjs"
+
+  vectors:
+    name: vectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Regenerate the golden vectors
+        run: node tools/vectors/generate.mjs
+      - name: The committed vectors must be exactly what generate.mjs produces
+        run: |
+          if [ -n "$(git status --porcelain -- tests/fixtures/vectors.json)" ]; then
+            echo "::error::tests/fixtures/vectors.json is stale — run npm run vectors and commit the result"
+            git diff -- tests/fixtures/vectors.json | head -80
+            exit 1
+          fi
+          git diff --exit-code -- tests/fixtures/vectors.json
+      - name: Verify the vectors against src/core
+        run: node tools/vectors/verify.mjs
+
+  python-conformance:
+    name: python-conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: The Python reference decoder must agree with every vector
+        run: python3 tools/playlist/conformance.py --vectors tests/fixtures/vectors.json
+
+  windows-handler:
+    name: windows-handler
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # The handler is the only place a real user's playlist can be silently
+      # corrupted on the way to VLC, so it is asserted against the same vectors.
+      - name: PowerShell handler self-test against the vectors
+        shell: pwsh
+        run: |
+          powershell -File tools/windows/selftest.ps1 -VectorsPath tests/fixtures/vectors.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  dist-fresh:
+    name: dist-fresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Rebuild the userscript
+        run: python3 tools/build.py
+      - name: The committed dist/ must be exactly what src/ builds
+        run: |
+          if [ -n "$(git status --porcelain -- dist/)" ]; then
+            echo "::error::dist/ is stale — run python3 tools/build.py and commit the result"
+            git diff --stat -- dist/
+            exit 1
+          fi
+          git diff --exit-code -- dist/
+
+  e2e:
+    name: e2e (headless Chrome + fake Emby)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build the userscript if it is not committed yet
+        run: |
+          if [ ! -f dist/bingetovlc.user.js ]; then
+            python3 tools/build.py
+          fi
+      - name: Check the Chromium binary is present
+        run: |
+          for candidate in /usr/bin/google-chrome /usr/bin/google-chrome-stable /opt/google/chrome/chrome; do
+            if [ -x "$candidate" ]; then echo "using $candidate"; exit 0; fi
+          done
+          echo "::warning::no Chromium found; the e2e will report SKIP"
+      - name: node --test tests/e2e/
+        run: node --test "tests/e2e/**/*.test.mjs"
+      - name: Upload the e2e capture on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: tests/e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  lint:
+    name: lint (syntax + no committed credential)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: node --check every .js and .mjs file
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          while IFS= read -r file; do
+            if ! node --check "$file"; then
+              echo "::error file=$file::node --check failed"
+              status=1
+            fi
+          done < <(find . -type f \( -name '*.js' -o -name '*.mjs' \) \
+                     -not -path './.git/*' -not -path './node_modules/*' | sort)
+          exit "$status"
+
+      - name: python3 -m py_compile every .py file
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          while IFS= read -r file; do
+            if ! python3 -m py_compile "$file"; then
+              echo "::error file=$file::py_compile failed"
+              status=1
+            fi
+          done < <(find . -type f -name '*.py' -not -path './.git/*' -not -path './node_modules/*' | sort)
+          exit "$status"
+
+      # This repository must never contain a real Emby API token. A real token
+      # is a 32-64 character hex string; the vectors' placeholder token lives
+      # under tests/ and is deliberately fake, so only src/ and dist/ (the two
+      # things that ship) are scanned.
+      - name: No hardcoded credential in src/ or dist/
+        shell: bash
+        run: |
+          set -uo pipefail
+          pattern='api_key[^A-Za-z0-9]{0,4}[0-9a-fA-F]{32,64}'
+          paths=()
+          [ -d src ] && paths+=("src")
+          [ -d dist ] && paths+=("dist")
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "nothing to scan"
+            exit 0
+          fi
+          set +e
+          matches=$(grep -rInE -- "$pattern" "${paths[@]}")
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "$matches"
+            echo "::error::a 32-64 character hex string sits next to api_key= — that looks like a real token"
+            exit 1
+          fi
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::grep failed with exit $rc"
+            exit 1
+          fi
+          echo "ok: no hardcoded credential found in ${paths[*]}"
