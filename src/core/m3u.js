@@ -1,5 +1,5 @@
 /**
- * vlcmate — M3U serialisation.
+ * bingetovlc — M3U serialisation.
  *
  * Two callers depend on this being byte-identical:
  *   1. the userscript, for the "download .m3u" fallback and "copy playlist"
@@ -22,7 +22,9 @@ function oneLine(text) {
     .trim();
 }
 
-function formatDuration(seconds) {
+// Named to stay distinct from diagnostics.formatDuration, which formats a whole
+// queue's runtime for humans. This one emits the #EXTINF field.
+function m3uDuration(seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value <= 0) return "-1";
   return String(Math.round(value));
@@ -40,7 +42,7 @@ export function buildM3u(payload, { includeTokens = true, newline = "\n" } = {})
   if (payload.title) lines.push(`#PLAYLIST:${oneLine(payload.title)}`);
 
   for (const item of payload.items) {
-    lines.push(`#EXTINF:${formatDuration(item.d)},${oneLine(item.t || item.u)}`);
+    lines.push(`#EXTINF:${m3uDuration(item.d)},${oneLine(item.t || item.u)}`);
     if (opts.cache) lines.push(`#EXTVLCOPT:network-caching=${Math.round(Number(opts.cache))}`);
     // Header options exist for the generic (non-Emby) adapters, where a stream
     // may be referrer-locked. Emby never needs them: its token is in the URL.

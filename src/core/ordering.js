@@ -1,5 +1,5 @@
 /**
- * vlcmate — queue assembly.
+ * bingetovlc — queue assembly.
  *
  * The feature this project exists for is "queue a whole season in the right
  * order", so ordering is explicit, tested code rather than whatever order an
