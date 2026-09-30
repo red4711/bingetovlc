@@ -111,22 +111,38 @@ jobs:
   windows-native-handler:
     name: windows-native-handler
     runs-on: windows-latest
-    timeout-minutes: 5
+    # The toolchain download is ~45 MB. A 5 minute budget cancelled this job
+    # mid-download twice, so the budget covers the download as well as the build.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache the pinned Zig toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/zig-0.13.0
+          key: zig-0.13.0-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install the pinned Zig toolchain (0.13.0)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # Invoke-WebRequest renders a progress bar and buffers the response; for a
+          # 45 MB archive that is slow enough to look like a hang. curl.exe ships
+          # with Windows and does neither.
+          $ProgressPreference = 'SilentlyContinue'
           $zip = Join-Path $env:RUNNER_TEMP 'zig-0.13.0.zip'
           $dir = Join-Path $env:RUNNER_TEMP 'zig-0.13.0'
-          Invoke-WebRequest -Uri 'https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip' -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath $dir -Force
-          $zig = (Get-ChildItem -Path $dir -Recurse -Filter 'zig.exe' | Select-Object -First 1).FullName
-          if (-not $zig) { throw 'zig.exe was not found in the downloaded archive' }
-          "ZIG_EXE=$zig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          & $zig version
+          $zigExe = (Get-ChildItem -Path $dir -Recurse -Filter 'zig.exe' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $zigExe) {
+            curl.exe -sSL -o $zip 'https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip'
+            if ($LASTEXITCODE -ne 0) { throw "downloading zig failed with exit $LASTEXITCODE" }
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
+            $zigExe = (Get-ChildItem -Path $dir -Recurse -Filter 'zig.exe' | Select-Object -First 1).FullName
+          }
+          if (-not $zigExe) { throw 'zig.exe was not found in the downloaded archive' }
+          "ZIG_EXE=$zigExe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & $zigExe version
 
       # tools/windows/build-launcher.sh is the single build path, locally and here,
       # so the version the exe reports is the one in package.json in both. Zig is
