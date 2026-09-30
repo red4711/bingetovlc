@@ -357,7 +357,23 @@ function installNavigationWatch(win, panel) {
   };
   win.addEventListener("hashchange", check);
   win.addEventListener("popstate", check);
-  // Some Emby views update the route without firing hashchange.
+
+  // Emby's web client is NOT hashchange-driven. Its bundles register the
+  // Navigation API (`navigation.addEventListener("navigate", ...)`) and announce a
+  // finished navigation by dispatching `viewbeforeshow` / `viewshow` CustomEvents
+  // on the view element, with `bubbles: true` so they reach `document`, and
+  // `detail.contextPath` set to the route (e.g. "/item?id=3020741"). Verified by
+  // reading the shipped bundles; this is the same mechanism the widely used
+  // Emby-to-external-player userscripts hook.
+  try {
+    win.document.addEventListener("viewbeforeshow", check);
+    win.document.addEventListener("viewshow", check);
+  } catch {
+    /* an older or different client without those events still has the poll below */
+  }
+
+  // Belt and braces for client generations whose events differ: a cheap poll. It
+  // only compares a string, so it costs nothing when nothing has changed.
   setInterval(check, 2000);
 }
 

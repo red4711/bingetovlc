@@ -316,8 +316,10 @@ returned exactly 28 items, in order.)
 
 A season page lists its own episodes through `Items?ParentId=…`; a series page
 lists every episode through `Shows/{id}/Episodes`. Both come back sorted by
-`(ParentIndexNumber, IndexNumber)`, but the script does not trust that order —
-it re-sorts locally (§7).
+`(ParentIndexNumber, IndexNumber)`, but the script does not trust that order — it
+re-sorts locally (§7). That is deliberate: those sort keys are not in Emby's
+documented `SortBy` list, so local ordering is the only guarantee the project is
+willing to depend on.
 
 ---
 

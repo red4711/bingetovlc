@@ -147,7 +147,13 @@ Hard-won rules (each one cost a real request to discover):
    `DirectStreamUrl: None` for both an episode and a movie. Build the URL:
    `{server}/Videos/{id}/stream?Static=true&api_key={token}`.
 3. **Do not pass `MediaSourceId` unless you have a real one** — a wrong value
-   yields `HTTP 400 Value cannot be null. (Parameter 'mediaSource')`.
+   yields `HTTP 400 Value cannot be null. (Parameter 'mediaSource')`. Emby's own
+   video-streaming documentation lists `MediaSourceId` *and* `PlaySessionId` as
+   required for `/Videos/{id}/stream`, but Emby's OpenAPI specification omits both,
+   and a live probe against 4.10.0.40 settled it: `Static=true` with neither returns
+   `206` and the original bytes. The project therefore sends neither — only
+   `api_key` — because an invented `MediaSourceId` is a hard failure while an
+   omitted one is demonstrably fine.
 4. **Never request `Fields=…MediaSources…` for a whole season.** 28 episodes
    with `Fields=MediaSources,Overview` produced a >200 KB response body. Lists
    use minimal fields; per-item detail is fetched only when needed.
@@ -157,7 +163,19 @@ Hard-won rules (each one cost a real request to discover):
 6. **Skip items with `LocationType == "Virtual"`** (missing/upcoming episodes
    with no file) and items whose `Path` is empty. They cannot be direct played.
 7. Ordering key is `(ParentIndexNumber, IndexNumber)`, falling back to
-   `AiredEpisodeNumber`, then `Id` — for stable ordering without duplicates.
+   `AiredEpisodeNumber`, then `Id` — for stable ordering without duplicates. Note
+   that `SortBy=ParentIndexNumber,IndexNumber` is **not** in Emby's documented
+   `SortBy` option list, even though a live server honoured it (28 of 28 episodes,
+   38 of 38 across two seasons, in order). The code therefore does not depend on it:
+   the response order is re-sorted locally, so an undocumented sort key silently
+   ceasing to work costs nothing.
+9. Nothing reports playback progress back to Emby. The handler starts VLC and exits;
+   VLC speaks no Emby protocol, and `/Sessions/Playing` is never called. So an
+   episode watched through bingetovlc is **not** marked watched, `Resume`/`NextUp` do
+   not advance, and the "skip already-watched" setting only knows what the Emby web
+   player recorded. Whether Emby would eventually drop a `Static=true` stream that
+   reports no progress is undocumented and not exercised here; the requests this
+   project makes all completed within normal response times.
 8. Auth: `api_key` works as a query parameter everywhere the script needs it,
    including the streaming endpoint (verified with a byte-range request).
    Without it the stream is **HTTP 401**.

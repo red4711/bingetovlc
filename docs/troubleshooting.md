@@ -31,6 +31,7 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 | Clicking **Play in VLC** does nothing | Payload failed to decode, or the handler did not run | Read the handler log; try `-SelfTest`; §3 |
 | VLC opens but sits at 0 % | Stream URL not returning bytes (auth or reachability) | §4, and the 401 section §5 |
 | VLC plays a few seconds then stops | Connection interrupted; caching too low; server unreachable intermittently | §4.2 |
+| Episodes played in VLC still show as unwatched in Emby | VLC speaks no Emby protocol, so nothing reports progress; this is expected, not a fault | §2 note below |
 | HTTP 401 inside VLC | Token missing, wrong, or revoked | §5 |
 | Wrong episode plays, or the queue is short | URI truncation, or an ordering/filter surprise | §6 |
 | VLC opens the playlist but stops after one episode | Single-entry playlist, or the `one` option interfering | §7 |

@@ -128,9 +128,20 @@ function normalizeServer(value) {
 }
 
 /**
- * Last-resort credential read. Emby keeps its credentials in localStorage; the
- * exact key and whether an access token is included varies by client
- * generation, so this is best effort and its answers are labelled untrusted.
+ * Last-resort credential read.
+ *
+ * Emby stores credentials in localStorage under `servercredentials3` (older
+ * builds: `servercredentials`) in a known shape, verified by reading the shipped
+ * bundles:
+ *
+ *   {ConnectUserId, ConnectAccessToken,
+ *    Servers: [{Id, Name, ManualAddress, LocalAddress, RemoteAddress, AccessToken,
+ *               UserId, Users: [{UserId, AccessToken}]}]}
+ *
+ * The per-user token lives at `Servers[].Users[].AccessToken`, which is why the
+ * server list is handled explicitly here rather than by a generic deep walk: a
+ * generic walk finds a server node with an address and an AccessToken but no
+ * matching UserId, and would pair them up wrongly.
  */
 function readStoredCredentials(win) {
   try {
@@ -141,11 +152,36 @@ function readStoredCredentials(win) {
     const credentialKeys = keys.filter((key) => /credential|server/i.test(key));
     for (const key of credentialKeys) {
       const parsed = safeParse(store.getItem(key));
+      const fromServers = findStoredServer(parsed);
+      if (fromServers) return { ...fromServers, source: `localStorage:${key}`, untrusted: true, win };
+    }
+    for (const key of credentialKeys) {
+      const parsed = safeParse(store.getItem(key));
       const found = findCredentials(parsed);
       if (found) return { ...found, source: `localStorage:${key}`, untrusted: true, win };
     }
   } catch {
     /* storage can be blocked; that is fine */
+  }
+  return null;
+}
+
+/** The `servercredentials3` shape: address on the server, token on the user. */
+function findStoredServer(parsed) {
+  const servers = parsed && Array.isArray(parsed.Servers) ? parsed.Servers : null;
+  if (!servers) return null;
+  for (const server of servers) {
+    if (!server || typeof server !== "object") continue;
+    const address = server.ManualAddress || server.LocalAddress || server.RemoteAddress;
+    const users = Array.isArray(server.Users) ? server.Users : [];
+    for (const user of users) {
+      if (user && user.AccessToken && user.UserId && address) {
+        return { server: normalizeServer(address), token: user.AccessToken, uid: user.UserId, apiClient: null, getUrl: null };
+      }
+    }
+    if (server.AccessToken && server.UserId && address) {
+      return { server: normalizeServer(address), token: server.AccessToken, uid: server.UserId, apiClient: null, getUrl: null };
+    }
   }
   return null;
 }
