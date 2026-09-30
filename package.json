@@ -7,9 +7,11 @@
   "license": "MIT",
   "scripts": {
     "build": "python3 tools/build.py",
-    "test": "node --test tests/",
-    "test:e2e": "node --test tests/e2e/",
-    "vectors": "node tools/vectors/generate.mjs"
+    "test": "node --test \"tests/unit/**/*.test.mjs\"",
+    "test:e2e": "node --test \"tests/e2e/**/*.test.mjs\"",
+    "vectors": "node tools/vectors/generate.mjs",
+    "vectors:verify": "node tools/vectors/verify.mjs",
+    "conformance": "python3 tools/playlist/conformance.py --vectors tests/fixtures/vectors.json"
   },
   "engines": {
     "node": ">=22"

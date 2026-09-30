@@ -180,8 +180,9 @@ queue travels as a single argument. Full format: [`docs/SPEC.md`](docs/SPEC.md).
 
 ```bash
 python3 tools/build.py                 # src/ -> dist/bingetovlc.user.js (single file)
-node --test tests/                     # unit tests (no dependencies)
-node --test tests/e2e/                 # end-to-end: fake Emby server + real Chrome
+# A bare directory argument (`node --test tests/`) stopped working in Node 23+.
+node --test "tests/unit/**/*.test.mjs"   # unit tests (no dependencies)
+node --test "tests/e2e/**/*.test.mjs"    # end-to-end: fake Emby server + real Chrome
 ```
 
 The tests, the reference Python decoder and the PowerShell handler must agree on

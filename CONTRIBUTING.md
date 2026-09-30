@@ -29,9 +29,11 @@ Nothing to install. The scripts:
 |---|---|
 | `python3 tools/build.py` | concatenates `src/` into the single-file `dist/bingetovlc.user.js` (Tampermonkey needs one file) |
 | `npm run build` | alias for `python3 tools/build.py` |
-| `node --test tests/` | unit tests |
-| `npm test` | alias for `node --test tests/` |
-| `node --test tests/e2e/` | end-to-end: fake Emby server plus a real Chrome |
+| `node --test "tests/unit/**/*.test.mjs"` | unit tests |
+| `npm test` | alias for the unit glob above |
+| `node --test "tests/e2e/**/*.test.mjs"` | end-to-end: fake Emby server plus a real Chrome |
+| `npm run vectors` | regenerate `tests/fixtures/vectors.json` |
+| `npm run vectors:verify` | check the committed vectors against the JavaScript |
 | `npm run test:e2e` | alias for the e2e run |
 | `npm run vectors` | regenerates `tests/fixtures/vectors.json` |
 | `node tools/vectors/verify.mjs` | checks `vectors.json` against the JavaScript implementation |
@@ -107,7 +109,7 @@ names, the serialiser, the ordering — expect `vectors.json` to change. That is
 A pull request should be reviewable without the reviewer running it, and testable
 by whoever picks it up next.
 
-- [ ] **Tests pass**: `node --test tests/`, and `node --test tests/e2e/` when the
+- [ ] **Tests pass**: `node --test "tests/unit/**/*.test.mjs"`, and `node --test "tests/e2e/**/*.test.mjs"` when the
       change touches the handoff.
 - [ ] **Vectors regenerated** if any interface-visible output changed, and
       `node tools/vectors/verify.mjs` is green.

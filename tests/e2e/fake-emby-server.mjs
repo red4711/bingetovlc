@@ -374,6 +374,15 @@ export function startFakeEmby({ port = FAKE_PORT, userscriptPath } = {}) {
         state,
         close: () =>
           new Promise((done) => {
+            // Chrome holds keep-alive sockets open to this server; without
+            // dropping them `close()`'s callback never fires and a test that
+            // fails would hang the runner instead of reporting the failure.
+            try {
+              server.closeIdleConnections?.();
+              server.closeAllConnections?.();
+            } catch {
+              /* older Node: fall back to close() alone */
+            }
             server.close(() => done());
           }),
       });

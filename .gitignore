@@ -1,4 +1,4 @@
-# build artefacts are committed on purpose: Tampermonkey installs dist/vlcmate.user.js
+# build artefacts are committed on purpose: Tampermonkey installs dist/bingetovlc.user.js
 # straight from the repository, so a released file must be in git.
 node_modules/
 .worktrees/

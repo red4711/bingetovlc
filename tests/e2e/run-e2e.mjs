@@ -264,9 +264,11 @@ async function runScenario(cdp, scenario, index) {
   await evaluate(cdp, HANDOFF_HOOK);
 
   await waitFor(cdp, `!!document.getElementById("bingetovlc-play")`, 15000, "the bingetovlc-play button");
-  await waitFor(cdp, `!!document.getElementById("bingetovlc-scope")`, 15000, "the bingetovlc-scope select");
 
   if (scenario.scope) {
+    // The scope control is only touched when a scenario needs a non-default
+    // scope; docs/SPEC.md freezes the panel/play/preview/uri ids only.
+    await waitFor(cdp, `!!document.getElementById("bingetovlc-scope")`, 15000, "the bingetovlc-scope select");
     await waitFor(
       cdp,
       `Array.from(document.getElementById("bingetovlc-scope").options).some(o => o.value === ${JSON.stringify(scenario.scope)})`,
@@ -285,9 +287,9 @@ async function runScenario(cdp, scenario, index) {
   // Wait until the panel has rendered the queue this scenario expects and is not busy.
   await waitFor(
     cdp,
-    `document.getElementById("bingetovlc-list").children.length === ${scenario.expectIds.length} &&
+    `(document.getElementById("bingetovlc-list")?.children.length ?? -1) === ${scenario.expectIds.length} &&
      !document.getElementById("bingetovlc-play").disabled`,
-    20000,
+    15000,
     `a rendered queue of ${scenario.expectIds.length} item(s)`,
   );
 
@@ -349,6 +351,7 @@ export async function runE2e({ quiet = false } = {}) {
   const profileDir = mkdtempSync(join(tmpdir(), "bingetovlc-e2e-chrome-"));
   let chrome;
   let server;
+  let cdp = null;
   const pages = [];
   const consoleErrors = [];
 
@@ -390,7 +393,7 @@ export async function runE2e({ quiet = false } = {}) {
     }
 
     const target = await firstPageTarget(DEBUG_PORT, 10000);
-    const cdp = await connectCdp(target.webSocketDebuggerUrl);
+    cdp = await connectCdp(target.webSocketDebuggerUrl);
     cdp.on("Runtime.exceptionThrown", (params) => {
       consoleErrors.push(params.exceptionDetails?.exception?.description || params.exceptionDetails?.text || "exception");
     });
@@ -404,7 +407,25 @@ export async function runE2e({ quiet = false } = {}) {
     await cdp.send("Log.enable");
 
     for (const [index, scenario] of SCENARIOS.entries()) {
-      const result = await runScenario(cdp, scenario, index);
+      let result;
+      try {
+        result = await runScenario(cdp, scenario, index);
+      } catch (error) {
+        // One broken scenario must not hide the rest: record it as a failure
+        // and carry on, so the output says which page misbehaved.
+        record(`[${scenario.key}] scenario ran to completion`, false, String(error.message).slice(0, 300));
+        pages.push({
+          key: scenario.key,
+          scenario: scenario.name,
+          error: error.message,
+          ids: [],
+          uriElementIds: [],
+          expectIds: scenario.expectIds,
+          expectStart: scenario.expectStart ?? null,
+          payload: null,
+        });
+        continue;
+      }
       pages.push(result);
       const { ids, expectIds, uriElementIds, payload } = result;
 
@@ -533,6 +554,14 @@ export async function runE2e({ quiet = false } = {}) {
       server: { ...server.state, servedItemIds: [...server.state.servedItemIds] },
     };
   } finally {
+    // Close everything explicitly: an open WebSocket or a keep-alive socket to
+    // the fake server keeps the event loop alive, which would turn a test
+    // failure into a hung CI job.
+    try {
+      if (cdp) cdp.close();
+    } catch {
+      /* ignore */
+    }
     try {
       if (chrome && !chrome.killed) chrome.kill("SIGKILL");
     } catch {
