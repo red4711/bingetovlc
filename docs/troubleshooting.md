@@ -32,6 +32,7 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 | VLC opens but sits at 0 % | Stream URL not returning bytes (auth or reachability) | §4, and the 401 section §5 |
 | VLC plays a few seconds then stops | Connection interrupted; caching too low; server unreachable intermittently | §4.2 |
 | Episodes played in VLC still show as unwatched in Emby | VLC speaks no Emby protocol, so nothing reports progress; this is expected, not a fault | §2 note below |
+| The panel says **Failed to fetch** and the queue dropdown is empty | The address the session resolved to cannot be used from this page: mixed content, a LAN/Docker address, or a blocked request | §14 |
 | HTTP 401 inside VLC | Token missing, wrong, or revoked | §5 |
 | Wrong episode plays, or the queue is short | URI truncation, or an ordering/filter surprise | §6 |
 | VLC opens the playlist but stops after one episode | Single-entry playlist, or the `one` option interfering | §7 |
@@ -416,6 +417,53 @@ than a report that says "it doesn't work". Include:
 > out access to your server as that user. The bug report form asks for a
 > **token-stripped** playlist for exactly this reason. See
 > [`security.md`](security.md) §1.
+
+---
+
+## 14. The panel says **Failed to fetch** and the queue dropdown is empty
+
+**Symptom.** The panel appears, the summary shows *Reading item …*, then the
+status reads `Failed to fetch` and the **Queue** dropdown is empty. Nothing was
+sent to VLC.
+
+**Why the dropdown is empty.** The scope options are populated from the item
+Emby returns. If the request never arrives, there is no item type to choose from,
+so the empty dropdown is the *first* symptom, not a separate fault.
+
+**Cause.** `Failed to fetch` is a browser-level rejection: the request never
+reached the server, so it is never an HTTP status. In practice one of:
+
+* **A mixed-content block.** The page is `https://…` (typically the Emby Connect
+  client at `app.emby.media`) and the address the session resolved to is plain
+  `http://…`. Chrome refuses to send it.
+* **An unreachable address.** The stored address is a LAN or Docker address
+  (`http://192.168.x.x:8096`, `http://172.17–31.x.x:8096`, `http://10.x.x.x:8096`)
+  while the browser is on the public internet. A real report had
+  `http://172.20.0.10:8096` stored as the server's manual address.
+* **A blocked request** — an extension, a DNS failure, or a corporate proxy.
+
+**What bingetovlc does about it (0.2.1 and later).** The session no longer
+trusts one address. It collects every address the stored server entry knows,
+prefers the entry for the `serverId` the page is showing, discards addresses the
+browser cannot use (plain http on an https page; a private address on a public
+page), then probes the rest with `GET {address}/System/Info/Public` — an endpoint
+that needs no token — and uses the first that answers with real Emby JSON. The
+chosen address and the reason are recorded in the bug report as
+`address check`.
+
+**If it still fails,** the panel's **Copy report** names the address it tried and
+where that address came from, which distinguishes the cases above. Two fixes
+worth knowing:
+
+* Add the server's public https address (e.g. `https://your-emby.example.com`) in
+  Emby, under *Settings → Server → … , or by re-adding the server in the client*,
+  so a usable address is stored next to the LAN one.
+* Or browse Emby from the same origin as the server (its own hostname), where the
+  request is same-origin and no CORS or mixed-content rule applies.
+
+**Report it with:** the panel's **Copy report** output (it includes the page URL,
+the resolved address, `address check`, and the error) plus which browser you are
+using. Please do not paste the token — the report already redacts it.
 
 ---
 

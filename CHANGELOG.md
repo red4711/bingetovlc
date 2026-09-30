@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the payload version is bumped when they do. Until 1.0, pin to a commit or tag
 > rather than assuming compatibility across releases.
 
+## [0.2.1] - 2026-09-30
+
+### Fixed
+
+* **"Failed to fetch" with an empty queue dropdown on the Emby Connect web
+  client.** The credential fallback trusted a single stored address, which on a
+  real installation was a Docker address (`http://172.20.0.10:8096`) while the
+  page was the https client at `app.emby.media`. The browser refuses that request
+  twice over — plain http from an https page is mixed content, and a private
+  address is unreachable from a public page — so every request died before it was
+  sent and the only visible symptom was an empty scope dropdown.
+
+  The session now collects **every** address the stored server entry knows,
+  prefers the entry for the `serverId` the page is showing, discards addresses
+  the browser cannot use, and settles on the first one that answers
+  `/System/Info/Public`. A refused request now names the address it tried and
+  where that address came from, instead of reporting the browser's two-word
+  failure.
+
+* The reachability probe validates the response body, not just the status: a
+  single-page host answers `200` with HTML for unknown paths, so Emby Connect's
+  own app host looked like a valid server.
+
+### Added
+
+* An end-to-end scenario for the reported shape: no `ApiClient`, credentials
+  recovered from `localStorage`, first stored address unreachable. It asserts the
+  session is recovered *and* settles on an address that answers.
+* Unit tests for address selection, including the exact reported combination.
+
 ## [0.2.0] - 2026-09-30
 
 ### Fixed
@@ -89,5 +119,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the client's `ApiClient` global to appear is the least certain part of the
   design (see [`docs/how-it-works.md`](docs/how-it-works.md) §10).
 
+[0.2.1]: https://github.com/red4711/bingetovlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/red4711/bingetovlc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/red4711/bingetovlc/releases/tag/v0.1.0

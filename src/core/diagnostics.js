@@ -77,6 +77,8 @@ export function report({ session, target, queue, handoff, warnings = [], version
     lines.push(`  user id        : ${session.uid}`);
     lines.push(`  token          : ${session.token ? "present (not shown)" : "MISSING"}`);
     lines.push(`  discovered via : ${session.source || "unknown"}${session.untrusted ? " (best effort, unverified)" : ""}`);
+    if (session.probe) lines.push(`  address check  : ${session.probe}`);
+    if (session.addresses && session.addresses.length > 1) lines.push(`  other addresses: ${session.addresses.slice(1).join(", ")}`);
   } else {
     lines.push("  no Emby session was detected on this page");
   }

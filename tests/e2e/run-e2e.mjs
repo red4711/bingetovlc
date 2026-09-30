@@ -255,10 +255,21 @@ const SCENARIOS = [
   { key: "season", name: "season page", itemId: SEASON_ID, scope: null, expectIds: ALL_EPISODES },
   { key: "series", name: "series page", itemId: SERIES_ID, scope: null, expectIds: ALL_EPISODES },
   { key: "movie", name: "movie page", itemId: MOVIE_ID, scope: null, expectIds: [MOVIE_ID] },
+  {
+    // The reported failure, end to end: no ApiClient, and stored credentials whose
+    // first address is dead. The panel must probe, reject it and use the other one.
+    key: "season-stored-credentials",
+    name: "season page with no ApiClient, credentials recovered from localStorage",
+    itemId: SEASON_ID,
+    scope: null,
+    expectIds: ALL_EPISODES,
+    query: "noclient=1",
+    expectSessionSource: `localStorage:${"servercredentials3"}`,
+  },
 ];
 
 async function runScenario(cdp, scenario, index) {
-  const pageUrl = `${FAKE_ORIGIN}/web/index.html?route=item&id=${encodeURIComponent(scenario.itemId)}&_n=${Date.now()}${index}`;
+  const pageUrl = `${FAKE_ORIGIN}/web/index.html?route=item&id=${encodeURIComponent(scenario.itemId)}&_n=${Date.now()}${index}${scenario.query ? `&${scenario.query}` : ""}`;
   await cdp.send("Page.navigate", { url: pageUrl });
   await waitFor(cdp, `document.readyState === "complete"`, 15000, "page load");
   await evaluate(cdp, HANDOFF_HOOK);
@@ -304,6 +315,11 @@ async function runScenario(cdp, scenario, index) {
     `var el = document.getElementById("bingetovlc-uri"); return el ? el.textContent : "";`,
   );
   const summary = await evaluate(cdp, `var el = document.getElementById("bingetovlc-summary"); return el ? el.textContent : "";`);
+  const session = await evaluate(
+    cdp,
+    `const s = window.bingetovlc && window.bingetovlc.state ? window.bingetovlc.state.session : null;
+     return s ? { source: s.source || null, server: s.server || null, probe: s.probe || null, reachable: s.reachable === true } : null;`,
+  );
 
   const decoded = event && event.uri ? decode(uriPart(event.uri)) : null;
   const ids = decoded ? idsFromPayload(decoded) : [];
@@ -316,6 +332,11 @@ async function runScenario(cdp, scenario, index) {
     scenario: scenario.name,
     pageUrl,
     summary,
+    sessionSource: session ? session.source : null,
+    sessionServer: session ? session.server : null,
+    sessionProbe: session ? session.probe : null,
+    sessionReachable: session ? session.reachable : null,
+    expectSessionSource: scenario.expectSessionSource ?? null,
     mode: event?.mode ?? null,
     uri: event?.uri ?? null,
     uriElementText,
@@ -561,6 +582,21 @@ export async function runE2e({ quiet = false } = {}) {
         (result.uri?.length ?? 0) < 2046,
         `${result.uri?.length ?? 0} bytes (cap ~2046)`,
       );
+
+      if (result.expectSessionSource) {
+        // The reported bug: a session recovered from storage, whose first stored
+        // address cannot be reached. Both the recovery and the rejection matter.
+        record(
+          `[${result.key}] the session was recovered from ${result.expectSessionSource} and settled on an address that answers`,
+          result.sessionSource === result.expectSessionSource && result.sessionReachable === true,
+          `source=${result.sessionSource}, address=${result.sessionServer}`,
+        );
+        record(
+          `[${result.key}] the address in use is the one the reachability probe confirmed`,
+          typeof result.sessionProbe === "string" && result.sessionProbe.startsWith(String(result.sessionServer)),
+          `address check: ${result.sessionProbe}`,
+        );
+      }
 
       if (result.expectStart !== null) {
         record(

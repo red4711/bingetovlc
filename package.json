@@ -1,6 +1,6 @@
 {
   "name": "bingetovlc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Send Emby movies, episodes, seasons and whole shows to VLC - direct play, no transcoding.",
   "type": "module",

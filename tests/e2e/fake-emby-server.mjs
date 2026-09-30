@@ -163,8 +163,24 @@ function pageHtml() {
       var params = new URLSearchParams(location.search);
       var route = params.get("route") || "item";
       var id = params.get("id") || ${JSON.stringify(MOVIE_ID)};
-      var want = "#!/" + route + "?id=" + id;
+      var noclient = params.get("noclient") === "1";
+      var want = "#!/" + route + "?id=" + id + (noclient ? "&serverId=" + ${JSON.stringify(SERIES_ID)} : "");
       if (location.hash !== want) location.hash = want;
+      if (noclient) {
+        // Mimics the reported failure: the web client never publishes ApiClient,
+        // so the session has to come from stored credentials — which list an
+        // address nothing is listening on (the real report had a Docker address
+        // here) followed by one that works.
+        localStorage.setItem("servercredentials3", JSON.stringify({
+          Servers: [{
+            Id: ${JSON.stringify(SERIES_ID)},
+            Name: "Fake Emby",
+            ManualAddress: "http://127.0.0.1:9",
+            RemoteAddress: ${JSON.stringify(FAKE_ORIGIN)},
+            Users: [{ UserId: ${JSON.stringify(FAKE_USER_ID)}, AccessToken: ${JSON.stringify(FAKE_TOKEN)} }]
+          }]
+        }));
+      } else {
       window.ApiClient = {
         serverAddress: function () { return ${JSON.stringify(FAKE_ORIGIN)}; },
         accessToken: function () { return ${JSON.stringify(FAKE_TOKEN)}; },
@@ -177,6 +193,7 @@ function pageHtml() {
           return fetch(${JSON.stringify(FAKE_ORIGIN)} + "/Users/" + uid + "/Items/" + itemId).then(function (r) { return r.json(); });
         }
       };
+      }
     })();
   </script>
   <script src="/bingetovlc.user.js"></script>
