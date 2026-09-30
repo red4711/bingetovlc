@@ -1,0 +1,14 @@
+# build artefacts are committed on purpose: Tampermonkey installs dist/vlcmate.user.js
+# straight from the repository, so a released file must be in git.
+node_modules/
+.worktrees/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+tests/e2e/tmp/
+tests/e2e/artifacts/
