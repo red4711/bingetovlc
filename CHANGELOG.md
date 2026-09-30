@@ -10,7 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the payload version is bumped when they do. Until 1.0, pin to a commit or tag
 > rather than assuming compatibility across releases.
 
-## [Unreleased]
+## [0.2.0] - 2026-09-30
+
+### Fixed
+
+* **The settings panel was inside the Settings button.** `addOption()` appended
+  the controls into the disclosure button instead of the container it controls,
+  so the button grew to fit them (stretching the Download button beside it into a
+  390px empty slab) and clicking Settings showed and hid an element that was
+  always empty. The controls now live in the container, and `aria-expanded`
+  follows the state.
+* **A long queue rendered as invisible text.** Flex items with a non-visible
+  `overflow` lose their automatic minimum size, so a bounded-height column shrank
+  them instead of scrolling: the summary measured 3px tall and each queue row
+  4px, with the text clipped. Rows now keep their natural height and the panel
+  body scrolls.
+* **The panel could grow off the top of the screen.** A 28-episode queue made it
+  704px tall in a 577px window, hiding its own header and controls. It is capped
+  to the viewport now, with internal scrolling.
+* The hand-off URI heading no longer appears when the URI block is hidden, and
+  collapsing leaves a 58px pill rather than the header plus the footer.
+* Emby navigation is picked up from the client's own `viewbeforeshow`/`viewshow`
+  events instead of a poll-only `hashchange` watch, so the panel stops showing
+  the previously viewed item. The stored-credential fallback now handles the real
+  `servercredentials3` shape.
+
+### Changed
+
+* The panel was rebuilt around one primary action: full-width **Play in VLC**,
+  secondary actions in one row, and footer actions demoted to a third tier.
+  Settings are grouped under **VLC** and **Advanced** and styled consistently
+  (checkboxes, a dropdown with its own arrow, focus outlines everywhere).
+* The panel never prints a meaningless `unknown` runtime, counts are pluralised,
+  and the queue count moved to the queue header instead of repeating in the
+  summary.
+* The transient banner shares the panel's styling and can be dismissed directly.
+
+### Added
+
+* Seven panel-layout assertions to the end-to-end test, since neither layout bug
+  above was reachable by a DOM-level check: control location, `aria-expanded`,
+  measured row heights, viewport fit, and the collapsed state.
+
+## [0.1.0] - 2026-09-30
 
 ### Added
 
@@ -47,4 +89,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the client's `ApiClient` global to appear is the least certain part of the
   design (see [`docs/how-it-works.md`](docs/how-it-works.md) §10).
 
-[Unreleased]: https://github.com/red4711/bingetovlc/commits/main
+[0.2.0]: https://github.com/red4711/bingetovlc/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/red4711/bingetovlc/releases/tag/v0.1.0

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         bingetovlc — send Emby episodes to VLC
 // @namespace    https://github.com/red4711/bingetovlc
-// @version      0.1.0
+// @version      0.2.0
 // @description  Adds a "Play in VLC" panel to the Emby web app. Queues one episode, a whole season or a whole show into VLC as a direct-play playlist — the original file, no transcoding, no background service.
 // @author       red4711
 // @license      MIT
@@ -2490,7 +2490,7 @@ function showBanner(doc, message, { kind = "info", timeoutMs = 9000, actionLabel
  * engineering against.
  */
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const EMBY_ROUTES = /^#!\/(item|details|list|videos|queue|home|movies|tv|shows|music|settings)/i;
 
