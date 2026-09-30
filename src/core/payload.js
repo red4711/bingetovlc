@@ -11,8 +11,12 @@
  *    for any of those layers to mangle.
  *  - No `Buffer`, no `btoa`/`atob`: pure JS so the same file runs in the page,
  *    in Node (`node --test`) and in the CI harness.
- *  - Decoding tolerates the variants a browser might hand over (padding, `+/`,
- *    whitespace, full-width or URL-escaped characters) rather than failing.
+ *  - Truncation detection, because a long URI can be cut off somewhere in the
+ *    chain without any layer reporting an error. Two independent signals: the
+ *    declared item count `n`, and non-zero trailing bits, which a correct
+ *    base64url encoding of a whole payload never has.
+ *  - Decoding tolerates the variants a browser might hand over anyway (padding,
+ *    `+/`, whitespace, percent-escapes) rather than failing on them.
  */
 
 export const PAYLOAD_VERSION = 1;
@@ -94,7 +98,11 @@ export function base64UrlEncodeBytes(bytes) {
   return out;
 }
 
-/** base64url (or base64, padded, URL-escaped) -> bytes. Tolerant on purpose. */
+/**
+ * base64url (or base64, padded, percent-escaped, whitespace-wrapped) -> bytes.
+ * Tolerant about the input spelling, strict about the input *bytes*: leftover
+ * bits must be zero, otherwise the payload was truncated or corrupted in transit.
+ */
 export function base64UrlDecodeBytes(input) {
   let s = String(input)
     .replace(/\s+/g, "")
@@ -118,6 +126,9 @@ export function base64UrlDecodeBytes(input) {
       bits -= 8;
       bytes.push((buffer >> bits) & 0xff);
     }
+  }
+  if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) {
+    throw new Error("payload was truncated or corrupted in transit");
   }
   return bytes;
 }
@@ -151,7 +162,15 @@ export function build({ source, server, title, scope, items = [], opts = {} }) {
   });
   if (normalised.length === 0) throw new Error("payload needs at least one item");
 
-  const payload = { v: PAYLOAD_VERSION, src: source || "unknown", server: server || "", title: title || "", scope: scope || "item", items: normalised };
+  const payload = {
+    v: PAYLOAD_VERSION,
+    src: source || "unknown",
+    server: server || "",
+    title: title || "",
+    scope: scope || "item",
+    n: normalised.length,
+    items: normalised,
+  };
   const cleanOpts = {};
   for (const key of ["fs", "one", "exit", "cache", "referrer", "ua"]) {
     if (opts[key] !== undefined && opts[key] !== null && opts[key] !== false) cleanOpts[key] = opts[key];
@@ -179,6 +198,11 @@ export function validate(payload) {
   }
   if (!Array.isArray(payload.items) || payload.items.length === 0) {
     throw new Error("payload has no items");
+  }
+  if (payload.n !== undefined && payload.n !== payload.items.length) {
+    throw new Error(
+      `payload is incomplete: it declares ${payload.n} items but contains ${payload.items.length}`,
+    );
   }
   for (const item of payload.items) {
     if (!item || typeof item.u !== "string" || !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(item.u)) {

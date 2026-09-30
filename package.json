@@ -1,0 +1,17 @@
+{
+  "name": "bingetovlc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Send Emby movies, episodes, seasons and whole shows to VLC - direct play, no transcoding.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "python3 tools/build.py",
+    "test": "node --test tests/",
+    "test:e2e": "node --test tests/e2e/",
+    "vectors": "node tools/vectors/generate.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
