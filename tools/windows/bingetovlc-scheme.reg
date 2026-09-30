@@ -1,0 +1,42 @@
+Windows Registry Editor Version 5.00
+
+; bingetovlc - per-user (HKCU) protocol handler template.
+;
+; Import this file by double-clicking it, or with:
+;   reg import bingetovlc-scheme.reg
+;
+; BEFORE importing, replace the placeholders below:
+;   __HANDLER_PATH__  full path to bingetovlc-handler.ps1
+;                     e.g. C:\Users\you\bingetovlc\tools\windows\bingetovlc-handler.ps1
+;   __VLC_PATH__      full path to vlc.exe
+;                     e.g. C:\Program Files\VideoLAN\VLC\vlc.exe
+;
+; .reg format notes: backslashes are doubled (\\), and embedded double quotes
+; are escaped with a backslash (\").
+;
+; These keys live under HKEY_CURRENT_USER, so they apply to the current user
+; only and need no administrator rights. A HKCU key overrides any machine-wide
+; handler for this user.
+;
+; Prefer install.ps1 if you want automatic VLC detection, a .reg backup of any
+; overridden key and a safe -Uninstall.
+
+[HKEY_CURRENT_USER\Software\Classes\vlc]
+@="URL:vlc Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\vlc\DefaultIcon]
+@="\"__VLC_PATH__\",0"
+
+[HKEY_CURRENT_USER\Software\Classes\vlc\shell\open\command]
+@="powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"__HANDLER_PATH__\" \"%1\""
+
+[HKEY_CURRENT_USER\Software\Classes\bingetovlc]
+@="URL:bingetovlc Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\bingetovlc\DefaultIcon]
+@="\"__VLC_PATH__\",0"
+
+[HKEY_CURRENT_USER\Software\Classes\bingetovlc\shell\open\command]
+@="powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"__HANDLER_PATH__\" \"%1\""
