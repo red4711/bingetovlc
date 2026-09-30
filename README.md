@@ -24,8 +24,9 @@ one click.
 |---|---|
 | The stream URL is a byte-exact passthrough with no transcode | Byte-range request to a live Emby 4.10.0.40 server: `206`, `video/x-matroska`, `Content-Range: bytes 0-16383/3500835068`, EBML magic `1a45dfa3` |
 | The queue order, de-duplication and Virtual-item filtering are right | The built userscript driven in a real headless Chromium against a stubbed Emby API: season → 28 ordered episodes, series → 28, movie → 1, episode → 1, rest-of-season → 26, whole-season-from-here → 28 with `start=3` |
-| The Windows handler writes the intended playlist | `tools/windows/selftest.ps1` under PowerShell: 9/9 checks — the 7 golden vectors plus two playlist-injection cases |
-| Three independent implementations agree | The JavaScript, the Python reference decoder and the PowerShell handler produce byte-identical M3U for all 7 golden vectors |
+| A whole season fits in a single click | 28 episodes produce a **1,584-byte** URI as ids. The same queue as full stream URLs was **5,471 bytes**, over the ~2046-character cap Windows applies to an external-protocol URI — that version would have failed silently on Windows (Chrome shows its prompt, then nothing happens). Measured in the browser test and pinned by unit tests |
+| The Windows handler writes the intended playlist | `tools/windows/selftest.ps1` under PowerShell: 10/10 checks — 8 golden vectors plus two playlist-injection cases |
+| Three independent implementations agree | JavaScript, Python and PowerShell produce byte-identical M3U for all 8 golden vectors |
 | The registry changes are reversible | `install.ps1 -DryRun` prints the exact `HKCU` operations and writes nothing; a pre-existing scheme key is exported with `reg export` before it is overridden |
 | A hostile URL cannot add lines to the playlist | A forged payload is refused (`exit 3`), and pushed past validation it still yields exactly 3 lines with 1 `#EXTINF` |
 
@@ -98,8 +99,23 @@ powershell -File .\install.ps1 -Diagnostics   # shows VLC path + registration st
 powershell -File .\install.ps1 -Uninstall     # restores the previous state
 ```
 
-The first time you click **Play in VLC**, Chrome asks *"Open VLC media player?"* —
-tick **Always allow** and it will not ask again.
+The first time you click **Play in VLC**, Chrome asks for permission to open an
+external application. Accepting is remembered for that site, so it asks once.
+
+Two details worth knowing, both from Chromium's own source rather than folklore:
+
+* The **"Always open" checkbox was removed from Chrome's dialog in Chrome 77**. It
+  only comes back if an administrator enables the
+  `ExternalProtocolDialogShowAlwaysOpenCheckbox` policy. Chrome's per-site memory
+  is the mechanism you will actually see.
+* A **user gesture is required**, and Chrome decides whether it may remember the
+  answer per origin. The hand-off therefore happens on your click, not from a timer
+  or a page load.
+
+**Firefox:** it needs one explicit opt-in before it will hand a scheme to an
+external application — set `network.protocol-handler.expose.vlc` to `false` in
+`about:config`, then click a Play button and choose VLC in the prompt. Without
+that, Firefox silently does nothing.
 
 ### 3. Understood the security model
 
@@ -154,7 +170,8 @@ queue travels as a single argument. Full format: [`docs/SPEC.md`](docs/SPEC.md).
 
 | Document | Contents |
 |---|---|
-| [`docs/SPEC.md`](docs/SPEC.md) | Frozen interfaces: payload v1, M3U rules, Emby API contract, module layout |
+| [`docs/SPEC.md`](docs/SPEC.md) | Frozen interfaces: payload v2, M3U rules, Emby API contract, module layout |
+| [`docs/vlc-notes.md`](docs/vlc-notes.md) | What VLC and Windows actually do, with sources: the ~2 KB URI cap, header options, why `vlc://` needs registering, HLS/DRM limits, and the prior art |
 | [`docs/how-it-works.md`](docs/how-it-works.md) | The API findings behind every design decision, with the evidence |
 | [`docs/security.md`](docs/security.md) | Token exposure, temp-file handling, threat model |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | Nothing happens / wrong episode / VLC opens but stalls |

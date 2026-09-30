@@ -64,17 +64,37 @@ function currentItemId(win) {
   }
 }
 
-function payloadFor(queue, settings) {
+/**
+ * Build the payload for a queue.
+ *
+ * `budget` is the URI length ceiling, or null for the downloaded-.m3u path where
+ * there is no ceiling and the full episode titles are worth keeping.
+ */
+function payloadFor(queue, settings, budget) {
   const startIndex = queue.items.findIndex((entry) => String(entry.id) === String(state.itemId));
   const opts = handoffOptions(settings);
   if (startIndex > 0 && queue.scope !== "item") opts.start = startIndex + 1;
   return build({
     source: "emby",
     server: state.session.server,
+    token: state.session.token,
     title: queue.title,
     scope: queue.scope,
-    items: queue.items.map((entry) => ({ url: entry.url, title: entry.title, duration: entry.duration })),
+    // Ids, not URLs. A season's worth of stream URLs is ~5.5 KB, and Windows caps
+    // an external-protocol URI at about 2 KB (Chromium hands it to ShellExecute),
+    // so the handler builds each URL from the id instead. Measured: the same
+    // 28 episode season is ~700 bytes as ids and 5,471 bytes as URLs.
+    items: queue.items.map((entry) => ({
+      id: entry.id,
+      title: entry.title,
+      duration: entry.duration,
+      // Sent so the handler can still label entries "S01E03" if building the URI
+      // had to drop the titles to stay inside the ~2 KB Windows hand-off cap.
+      season: entry.season,
+      episode: entry.episode,
+    })),
     opts,
+    budget,
   });
 }
 
@@ -205,7 +225,7 @@ async function act(win, panel, kind) {
       panel.setStatus("Nothing to queue for this item.", "warn");
       return;
     }
-    const payload = payloadFor(queue, state.settings);
+    const payload = payloadFor(queue, state.settings, MAX_URI_LENGTH);
 
     if (kind === "preview") {
       panel.setUri(uriFor(payload, state.settings.scheme));
@@ -213,19 +233,27 @@ async function act(win, panel, kind) {
       return;
     }
     if (kind === "download") {
-      const filename = download(win, payload, { includeTokens: true });
+      // No URI here, so no budget: keep the episode titles.
+      const filename = download(win, payloadFor(queue, state.settings, null), { includeTokens: true });
       panel.setStatus(`Saved ${filename}. Open it with VLC (double-click).`);
       showBanner(document, `Playlist saved as ${filename}. It contains your API token — do not share it.`, { kind: "warn" });
       return;
     }
 
-    const handoff = deliver(payload, win, { scheme: state.settings.scheme });
+    // Queues too long for a URI go out as a file, and that file gets the titles
+    // back (the URI budget is what forced them out of the payload).
+    const handoff =
+      chooseHandoff(payload, state.settings.scheme).mode === "uri"
+        ? deliver(payload, win, { scheme: state.settings.scheme })
+        : deliver(payloadFor(queue, state.settings, null), win, { scheme: state.settings.scheme });
     state.lastHandoff = handoff;
     if (handoff.mode === "uri") {
       panel.setStatus(`Sent ${handoff.items} item(s) to the VLC handler (${handoff.length} byte URI).`);
-      showBanner(document, `Opening ${handoff.items} item(s) in VLC. Chrome may ask once — tick "Always allow".`, {
-        kind: "info",
-      });
+      showBanner(
+        document,
+        `Opening ${handoff.items} item(s) in VLC. Chrome asks for permission the first time; accepting is remembered for this site (the "Always allow" checkbox is hidden unless your administrator enables it by policy).`,
+        { kind: "info" },
+      );
     } else {
       panel.setStatus(describeHandoff(handoff), "warn");
       showBanner(document, describeHandoff(handoff), { kind: "warn" });

@@ -41,37 +41,65 @@ bingetovlc://open?d=<base64url(json)>
 * The handler also accepts a manual single-item form:
   `vlc://open?url=<percent-encoded-absolute-url>&t=<title>`.
 
-### Payload v1
+### Payload v2
 
 Compact keys: this string travels through a command line, so every byte counts.
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "src": "emby",
   "server": "https://media.example.com",
+  "token": "0123456789abcdef0123456789abcdef",
   "title": "Frieren: Beyond Journey's End",
   "scope": "season",
+  "n": 2,
   "items": [
-    {"u": "https://media.example.com/Videos/3020743/stream?Static=true&api_key=...",
-     "t": "S01E01 The Journey's End",
-     "d": 1560}
+    {"i": "3020743", "t": "S01E01 The Journey's End", "d": 1560, "s": 1, "e": 1},
+    {"i": "3020744", "s": 1, "e": 2}
   ],
   "opts": {"fs": false, "one": true, "exit": false, "start": 0}
 }
 ```
 
-* `items[].u` — absolute URL, already authenticated (query-param token), so VLC
-  needs no headers, no cookies and no browser session. It must contain **no
-  whitespace and no control characters**: `validate()` and `build()` reject such
-  a URL, because a newline inside it would start a new line in the generated
-  playlist and could inject extra entries or `#EXTVLCOPT` lines. `buildM3u()`
-  strips control characters as a second layer, for payloads assembled elsewhere.
-  Percent-encode anything unusual rather than embedding it literally.
-* `items[].t` — display title for the playlist entry.
-* `items[].d` — duration in seconds (integer, optional).
+* `items[].i` — the Emby item id. **This is the important change from v1**, which
+  carried complete stream URLs: a 28 episode season was 5,471 bytes as URLs but is
+  about 1,600 bytes as ids, and Windows caps an external-protocol URI at roughly
+  2,046 characters (see `MAX_URI_LENGTH`). With URLs the season queue would have
+  failed on Windows by doing nothing at all. The handler builds each URL as
+  `{server}/Videos/{id}/stream?Static=true&api_key={token}`.
+* `items[].u` — an absolute URL, still supported for payload v1 and for the
+  generic adapter, which has no authenticated API to resolve an id against. It must
+  contain **no whitespace and no control characters**: `validate()` and `build()`
+  reject such a URL, because a newline inside it would start a new line in the
+  generated playlist and could inject extra entries or `#EXTVLCOPT` lines.
+  `buildM3u()` strips control characters as a second layer, for payloads assembled
+  elsewhere. Percent-encode anything unusual rather than embedding it literally.
+* `server` + `token` — required whenever any item uses `i`, because an id is only
+  resolvable against an authenticated server. The token charset is restricted to
+  `[A-Za-z0-9._~-]`: those are the characters every implementation can place in a
+  URL without percent-encoding, so the JavaScript, PowerShell and Python builds
+  cannot disagree about escaping.
+* `items[].t` — display title. `items[].d` — duration in seconds. Both optional.
+* `items[].s` / `items[].e` — season and episode numbers. Two bytes each, and they
+  are what lets the handler label a queue `S01E03` when the titles had to be
+  dropped to fit the URI budget.
 * `opts.fs` fullscreen, `opts.one` reuse a running VLC instance,
   `opts.exit` close VLC when the playlist ends, `opts.start` 1-based index.
+
+#### Fitting the URI budget
+
+`build()` calls `fitToBudget()` before it returns, so a caller cannot forget it. If
+the URI would exceed `MAX_URI_LENGTH` (1,800), the payload is trimmed in this order:
+
+1. **Titles** (`t`) are dropped, and `trimmed: "titles"` is recorded. The `s`/`e`
+   numbers reproduce the useful part of a title (`S01E03`) in two bytes each.
+2. **Durations** (`d`) are dropped next, recorded as `trimmed: "titles+durations"`.
+
+Ids are never dropped: they are the only part the handler cannot reconstruct. If
+the payload is still over budget, `chooseHandoff()` sends the queue to the
+downloaded-`.m3u` path, which has no length limit — and there the payload is built
+with `budget: null`, so the downloaded file keeps its full titles.
 
 ## 3. Generated M3U (written by the handler, and by the download fallback)
 

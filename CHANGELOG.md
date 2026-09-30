@@ -28,9 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **Season and series queueing** — order by `(ParentIndexNumber, IndexNumber)`,
   deduplicate by id, and drop `LocationType == "Virtual"` and empty-`Path` items.
   An episode page can queue *this episode + the rest of the season*.
-* **M3U fallback** — when a queue exceeds the URI budget (60 items or 6000
-  bytes), the userscript hands the user an `.m3u` file instead of a `vlc://` URI.
-  A 28-episode season fits a URI at 5,471 bytes.
+* **M3U fallback** — when a queue exceeds the URI budget (200 items or 1800 bytes,
+  the latter imposed by Windows' ~2046-character external-protocol limit), the user
+  gets a downloaded `.m3u` instead, with the full episode titles intact.
+* **Payload v2** — items carry Emby item ids and the handler builds the stream URL.
+  This took a 28-episode season from a 5,471-byte URI (over the Windows limit, and
+  therefore silently broken there) down to 1,584 bytes. Payload v1 is still accepted.
 * **Conformance vectors** (`tests/fixtures/vectors.json`) shared byte-for-byte
   between the JavaScript, the Python reference decoder and the PowerShell
   handler.

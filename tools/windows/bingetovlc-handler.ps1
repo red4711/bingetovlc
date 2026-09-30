@@ -200,6 +200,57 @@ function ConvertToSafeUrl {
     return [regex]::Replace([string]$Value, '[\x00-\x1F\x7F]', '')
 }
 
+# Mirrors assertSafeItemId() in src/core/payload.js: an id is short, opaque, and
+# cannot change the generated URL.
+function Test-SafeItemId {
+    param($Value)
+    $s = [string]$Value
+    if ([string]::IsNullOrEmpty($s)) { return $false }
+    if ($s.Length -gt 64) { return $false }
+    if ([regex]::IsMatch($s, '[\x00-\x1F\x7F\s]')) { return $false }
+    if ($s.Contains('/') -or $s.Contains('?')) { return $false }
+    return $true
+}
+
+function Get-Pad2 {
+    param($Value)
+    if ($null -eq $Value -or [string]::IsNullOrEmpty([string]$Value)) { return '00' }
+    $n = 0
+    if (-not [int]::TryParse([string]$Value, [ref]$n)) { return '00' }
+    if ($n -lt 0) { return '00' }
+    if ($n -lt 10) { return ('0' + [string]$n) }
+    return [string]$n
+}
+
+# Mirrors resolveItemUrl() in src/core/payload.js. The token charset is
+# restricted to [A-Za-z0-9._~-] by validation, which is exactly what every
+# implementation can place in a URL without percent-encoding, so this is a plain
+# concatenation in all three of them.
+function Resolve-ItemUrl {
+    param($Payload, $Item)
+    $u = [string](Get-Prop $Item 'u')
+    if (-not [string]::IsNullOrEmpty($u)) { return $u }
+    $server = [string](Get-Prop $Payload 'server')
+    while ($server.EndsWith('/')) { $server = $server.Substring(0, $server.Length - 1) }
+    $token = [string](Get-Prop $Payload 'token')
+    $id = [string](Get-Prop $Item 'i')
+    return ($server + '/Videos/' + $id + '/stream?Static=true&api_key=' + $token)
+}
+
+# Mirrors labelForItem() in src/core/payload.js: the title when it survived the
+# URI budget, then the compact SxxExx form, then the URL.
+function Get-ItemLabel {
+    param($Payload, $Item)
+    $t = [string](Get-Prop $Item 't')
+    if (-not [string]::IsNullOrEmpty($t)) { return $t }
+    $s = Get-Prop $Item 's'
+    $e = Get-Prop $Item 'e'
+    if ($null -ne $s -or $null -ne $e) {
+        return ('S' + (Get-Pad2 $s) + 'E' + (Get-Pad2 $e))
+    }
+    return (Resolve-ItemUrl $Payload $Item)
+}
+
 # base64url (RFC 4648 section 5, padding stripped) -> bytes.
 # Tolerant of padding, of +/ (plain base64) and of whitespace, matching
 # base64UrlDecodeBytes() in src/core/payload.js.
@@ -344,7 +395,10 @@ function Test-PayloadShape {
 
     $v = Get-Prop $Payload 'v'
     if ($null -eq $v) { return 'payload has no version field' }
-    if ([int]$v -ne 1) { return ('unsupported payload version ' + [string]$v + ' (this handler speaks 1)') }
+    $version = [int]$v
+    if ($version -ne 1 -and $version -ne 2) {
+        return ('unsupported payload version ' + [string]$v + ' (this handler speaks 1 and 2)')
+    }
 
     $items = Get-Prop $Payload 'items'
     if ($null -eq $items) { return 'payload has no items' }
@@ -358,10 +412,39 @@ function Test-PayloadShape {
         }
     }
 
+    $usesIds = $false
     foreach ($item in $list) {
         $u = Get-Prop $item 'u'
-        if (-not (Test-SafeUrl $u)) {
-            return 'payload item URL is not an absolute URL, or contains whitespace/control characters'
+        $i = Get-Prop $item 'i'
+        if (-not [string]::IsNullOrEmpty([string]$u)) {
+            if (-not (Test-SafeUrl $u)) {
+                return 'payload item URL is not an absolute URL, or contains whitespace/control characters'
+            }
+        } elseif (-not [string]::IsNullOrEmpty([string]$i)) {
+            if (-not (Test-SafeItemId $i)) {
+                return 'payload item id is empty, too long, or contains characters that would change the generated URL'
+            }
+            $usesIds = $true
+        } else {
+            return 'payload item has neither a url nor an id'
+        }
+    }
+
+    if ($usesIds) {
+        if (-not (Test-SafeUrl ([string](Get-Prop $Payload 'server')))) {
+            return 'payload carries item ids but no usable server address to build their URLs with'
+        }
+        $tok = [string](Get-Prop $Payload 'token')
+        if ([string]::IsNullOrEmpty($tok)) {
+            return 'payload carries item ids but no token to build their URLs with'
+        }
+        if ([regex]::IsMatch($tok, '[\x00-\x1F\x7F\s]')) {
+            return 'payload token contains whitespace or control characters'
+        }
+        if (-not [regex]::IsMatch($tok, '^[A-Za-z0-9._~-]+$')) {
+            # Same reason as the JavaScript validator: the three implementations
+            # must not be able to disagree about percent-encoding.
+            return 'payload token contains characters that would need percent-encoding'
         }
     }
     return $null
@@ -418,9 +501,8 @@ function Build-M3uText {
 
     foreach ($item in $items) {
         $duration = Get-Prop $item 'd'
-        $label    = Get-Prop $item 't'
-        $url      = Get-Prop $item 'u'
-        if ([string]::IsNullOrEmpty([string]$label)) { $label = $url }
+        $label    = Get-ItemLabel $Payload $item
+        $url      = Resolve-ItemUrl $Payload $item
         $lines.Add('#EXTINF:' + (Format-Duration $duration) + ',' + (ConvertToOneLine $label))
 
         $cache = Get-Prop $opts 'cache'

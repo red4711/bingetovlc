@@ -25,8 +25,14 @@ import json
 import sys
 from pathlib import Path
 
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
+SUPPORTED_VERSIONS = (1, 2)
 URI_SAFE = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+# Deliberately narrow, mirroring the JavaScript validator: these are the characters
+# every implementation can place in a URL without percent-encoding, so the Python,
+# JavaScript and PowerShell output cannot diverge on escaping.
+TOKEN_SAFE = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-")
 
 
 class PayloadError(ValueError):
@@ -79,24 +85,77 @@ def encode_payload(payload: dict) -> str:
 def validate(payload: dict) -> None:
     if not isinstance(payload, dict):
         raise PayloadError("payload is not an object")
-    if payload.get("v") != PAYLOAD_VERSION:
-        raise PayloadError(f"unsupported payload version {payload.get('v')!r} (this build speaks {PAYLOAD_VERSION})")
+    if payload.get("v") not in SUPPORTED_VERSIONS:
+        raise PayloadError(
+            f"unsupported payload version {payload.get('v')!r} (this build speaks {', '.join(str(v) for v in SUPPORTED_VERSIONS)})"
+        )
     items = payload.get("items")
     if not isinstance(items, list) or not items:
         raise PayloadError("payload has no items")
     declared = payload.get("n")
     if declared is not None and declared != len(items):
         raise PayloadError(f"payload is incomplete: it declares {declared} items but contains {len(items)}")
+
+    uses_ids = any(isinstance(item, dict) and not item.get("u") and item.get("i") for item in items)
+    if uses_ids:
+        server = payload.get("server")
+        if not isinstance(server, str) or "://" not in server:
+            raise PayloadError("payload carries item ids but no usable server address")
+        token = payload.get("token")
+        if not isinstance(token, str) or not token:
+            raise PayloadError("payload carries item ids but no token to build their URLs with")
+        if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in token):
+            raise PayloadError("payload token contains whitespace or control characters")
+        if any(ch not in TOKEN_SAFE for ch in token):
+            raise PayloadError("payload token contains characters that would need percent-encoding")
+
     for index, item in enumerate(items):
-        url = item.get("u") if isinstance(item, dict) else None
-        if not isinstance(url, str) or "://" not in url:
-            raise PayloadError(f"item {index} is not an absolute URL")
-        # An .m3u is line-oriented: a newline inside a URL would start a new line
-        # and could inject extra entries or #EXTVLCOPT lines. Rejected here, in the
-        # JavaScript validator and (as a second layer) in the serialiser.
-        if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
-            raise PayloadError(f"item {index} URL contains whitespace or control characters")
+        if not isinstance(item, dict):
+            raise PayloadError(f"item {index} is not an object")
+        url = item.get("u")
+        if isinstance(url, str) and url:
+            if "://" not in url:
+                raise PayloadError(f"item {index} is not an absolute URL")
+            # An .m3u is line-oriented: a newline inside a URL would start a new
+            # line and could inject extra entries or #EXTVLCOPT lines.
+            if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+                raise PayloadError(f"item {index} URL contains whitespace or control characters")
+            continue
+        item_id = item.get("i")
+        if not isinstance(item_id, str) or not item_id:
+            raise PayloadError(f"item {index} has neither a url nor an id")
+        if len(item_id) > 64 or any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in item_id):
+            raise PayloadError(f"item {index} id is unusable")
+        if "/" in item_id or "?" in item_id:
+            raise PayloadError(f"item {index} id contains characters that would change the generated URL")
     return None
+
+
+def resolve_item_url(payload: dict, item: dict) -> str:
+    """Mirrors resolveItemUrl() in src/core/payload.js."""
+    url = item.get("u")
+    if isinstance(url, str) and url:
+        return url
+    server = str(payload.get("server") or "").rstrip("/")
+    token = payload.get("token") or ""
+    return f"{server}/Videos/{item.get('i')}/stream?Static=true&api_key={token}"
+
+
+def pad2(value: object) -> str:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return "00"
+    return f"{number:02d}" if number >= 0 else "00"
+
+
+def item_label(payload: dict, item: dict) -> str:
+    """Mirrors labelForItem() in src/core/payload.js."""
+    if item.get("t"):
+        return str(item["t"])
+    if item.get("s") is not None or item.get("e") is not None:
+        return f"S{pad2(item.get('s'))}E{pad2(item.get('e'))}"
+    return resolve_item_url(payload, item)
 
 
 def one_line(text: object) -> str:
@@ -121,8 +180,8 @@ def build_m3u(payload: dict, include_tokens: bool = True) -> str:
     if payload.get("title"):
         lines.append(f"#PLAYLIST:{one_line(payload['title'])}")
     for item in payload["items"]:
-        url = item["u"]
-        lines.append(f"#EXTINF:{format_duration(item.get('d'))},{one_line(item.get('t') or url)}")
+        url = resolve_item_url(payload, item)
+        lines.append(f"#EXTINF:{format_duration(item.get('d'))},{one_line(item_label(payload, item))}")
         if opts.get("cache"):
             lines.append(f"#EXTVLCOPT:network-caching={int(round(float(opts['cache'])))}")
         if opts.get("referrer"):

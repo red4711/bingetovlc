@@ -19,13 +19,36 @@
  *    `+/`, whitespace, percent-escapes) rather than failing on them.
  */
 
-export const PAYLOAD_VERSION = 1;
+export const PAYLOAD_VERSION = 2;
 
-/** Conservative ceiling for a URI we are willing to hand to Chrome. */
-export const MAX_URI_LENGTH = 6000;
+/**
+ * Versions this build can *read*. `v1` carried full stream URLs, which made a
+ * 28 episode season a 5,471 byte URI — past the Windows hand-off limit below.
+ * `v2` carries item ids and lets the handler build the URL, so the same season
+ * fits in a few hundred bytes. Reading v1 stays supported so a URI produced by
+ * the earlier pre-release still works.
+ */
+export const SUPPORTED_VERSIONS = [1, 2];
 
-/** Guard rail: longer queues use the .m3u download path instead of a URI. */
-export const MAX_URI_ITEMS = 60;
+/**
+ * Ceiling for the URI handed to the browser.
+ *
+ * On Windows, Chromium hands an external-protocol URI to the shell with
+ * `ShellExecuteA`, so the URI is bound by `INTERNET_MAX_URL_LENGTH` (~2046, and
+ * IEInternals measured silent truncation at 2083) rather than by any browser
+ * limit. Over that length Chrome still shows its prompt and then does nothing at
+ * all when the user accepts — the failure mode is "no playlist, no error".
+ *
+ * A real measured data point: the v1 payload for a 28 episode season was 5,471
+ * bytes, i.e. it would have failed exactly there and only there — on the feature
+ * this project exists for. Hence 1,800 with headroom for the scheme, the query
+ * key and registry quoting. Queues that still exceed it fall back to a
+ * downloaded .m3u, which has no such limit.
+ */
+export const MAX_URI_LENGTH = 1800;
+
+/** Item ceiling, kept as a secondary guard rather than the primary budget. */
+export const MAX_URI_ITEMS = 200;
 
 const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -53,6 +76,77 @@ export function assertSafeUrl(url) {
     );
   }
   return true;
+}
+
+/** An Emby-style item id: short, opaque, and never able to affect a file line. */
+export function assertSafeItemId(id) {
+  if (typeof id !== "string" || id.length === 0 || id.length > 64) {
+    throw new Error("payload item id must be a non-empty string of at most 64 characters");
+  }
+  if (UNSAFE_URL_CHARS.test(id) || id.includes("/") || id.includes("?")) {
+    throw new Error("payload item id contains characters that would change the generated URL");
+  }
+  return true;
+}
+
+/**
+ * The URL for one payload item.
+ *
+ * v2 payloads carry ids and the handler builds the URL, so the queue stays small
+ * enough to survive the Windows hand-off. v1 payloads and the generic adapter
+ * carry the URL directly. Both shapes are accepted everywhere a playlist is
+ * produced (browser, PowerShell handler, Python reference), which is what keeps
+ * the three implementations byte-identical.
+ */
+export function resolveItemUrl(payload, item) {
+  if (item && typeof item.u === "string" && item.u) return item.u;
+  const server = String((payload && payload.server) || "").replace(/\/+$/, "");
+  const token = (payload && payload.token) || "";
+  return `${server}/Videos/${item.i}/stream?Static=true&api_key=${encodeURIComponent(token)}`;
+}
+
+function pad2(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? String(Math.trunc(n)).padStart(2, "0") : "00";
+}
+
+/**
+ * The playlist label for an item, in order of preference: the episode title when
+ * the payload had room for it, then the two-byte-per-item `S01E03` form, then the
+ * URL. `fitToBudget()` is what decides whether the title survives.
+ */
+export function labelForItem(payload, item) {
+  if (item && item.t) return item.t;
+  if (item && (item.s !== undefined || item.e !== undefined)) {
+    return `S${pad2(item.s)}E${pad2(item.e)}`;
+  }
+  return resolveItemUrl(payload, item);
+}
+
+/**
+ * Trim a payload until it fits the URI budget.
+ *
+ * Titles are the expensive part of a queue (20-40 bytes each) and the season and
+ * episode numbers reproduce the useful part of them in about 2 bytes, so titles
+ * are dropped first, then durations. What is never dropped is an id: that is the
+ * only part the handler cannot reconstruct.
+ *
+ * This runs inside `build()` so a caller cannot forget it, and it is recorded in
+ * `payload.trimmed` so the UI can tell the user the labels will be compact.
+ */
+export function fitToBudget(payload, { maxUriLength = MAX_URI_LENGTH, scheme = "vlc" } = {}) {
+  const length = () => launchUri(payload, scheme).length;
+  if (length() <= maxUriLength) return payload;
+  if (payload.items.some((item) => item.t)) {
+    for (const item of payload.items) delete item.t;
+    payload.trimmed = "titles";
+    if (length() <= maxUriLength) return payload;
+  }
+  if (payload.items.some((item) => item.d !== undefined)) {
+    for (const item of payload.items) delete item.d;
+    payload.trimmed = "titles+durations";
+  }
+  return payload;
 }
 
 /** String -> UTF-8 bytes (surrogate-pair safe). */
@@ -168,17 +262,44 @@ export function decodeText(text) {
 }
 
 /**
- * Build a payload object. Items are accepted with either short keys (`u`, `t`,
- * `d`) or long ones (`url`, `title`, `duration`) and normalised to short keys,
- * because the URI length budget is real.
+ * Build a payload object.
+ *
+ * Items are accepted with either short keys (`u`/`i`, `t`, `d`) or long ones
+ * (`url`/`id`, `title`, `duration`) and normalised to the short form, because the
+ * URI length budget is real and enforced by the operating system.
+ *
+ * Two item shapes are valid:
+ *   - `{i: "<item id>"}` with a payload-level `server` + `token`: the handler
+ *     builds the stream URL. This is what the Emby adapter uses, and it is the
+ *     reason a 28 episode season fits in a URI at all.
+ *   - `{u: "<absolute url>"}`: a complete URL, used by the generic adapter and by
+ *     v1 payloads.
  */
-export function build({ source, server, title, scope, items = [], opts = {} }) {
+export function build({ source, server, token, title, scope, items = [], opts = {}, budget = MAX_URI_LENGTH }) {
   if (!Array.isArray(items)) throw new Error("items must be an array");
   const normalised = items.map((item) => {
     const url = item.u || item.url;
-    if (!url || typeof url !== "string") throw new Error("item is missing a url");
-    assertSafeUrl(url);
-    const entry = { u: url };
+    const id = item.i || item.id;
+    if (!url && !id) throw new Error("item is missing a url or an id");
+    const entry = {};
+    if (url) {
+      assertSafeUrl(url);
+      entry.u = url;
+    } else {
+      assertSafeItemId(String(id));
+      entry.i = String(id);
+    }
+    // Season/episode numbers are 2 bytes each and let the handler label a queue
+    // "S01E03" when the full titles did not fit the URI budget. Guarded so a movie
+    // (both fields null) does not become "S00E00".
+    const rawSeason = item.s !== undefined ? item.s : item.season;
+    if (rawSeason !== undefined && rawSeason !== null && rawSeason !== "" && Number.isFinite(Number(rawSeason))) {
+      entry.s = Math.trunc(Number(rawSeason));
+    }
+    const rawEpisode = item.e !== undefined ? item.e : item.episode;
+    if (rawEpisode !== undefined && rawEpisode !== null && rawEpisode !== "" && Number.isFinite(Number(rawEpisode))) {
+      entry.e = Math.trunc(Number(rawEpisode));
+    }
     const label = item.t || item.title;
     if (label) entry.t = String(label).replace(/[\r\n]+/g, " ").trim();
     const duration = item.d === undefined ? item.duration : item.d;
@@ -198,12 +319,17 @@ export function build({ source, server, title, scope, items = [], opts = {} }) {
     n: normalised.length,
     items: normalised,
   };
+  if (token) payload.token = String(token);
   const cleanOpts = {};
   for (const key of ["fs", "one", "exit", "cache", "referrer", "ua"]) {
     if (opts[key] !== undefined && opts[key] !== null && opts[key] !== false) cleanOpts[key] = opts[key];
   }
   if (opts.start) cleanOpts.start = Math.max(1, Math.round(Number(opts.start)));
   if (Object.keys(cleanOpts).length) payload.opts = cleanOpts;
+  // The budget only applies to the URI path: a downloaded .m3u has no length
+  // limit, so it keeps the full titles (pass budget: null to skip the trim).
+  if (budget !== null) fitToBudget(payload, { maxUriLength: budget });
+  validate(payload);
   return payload;
 }
 
@@ -220,8 +346,8 @@ export function decode(text) {
 
 export function validate(payload) {
   if (!payload || typeof payload !== "object") throw new Error("payload is not an object");
-  if (payload.v !== PAYLOAD_VERSION) {
-    throw new Error(`unsupported payload version ${payload.v} (this build speaks ${PAYLOAD_VERSION})`);
+  if (!SUPPORTED_VERSIONS.includes(payload.v)) {
+    throw new Error(`unsupported payload version ${payload.v} (this build speaks ${SUPPORTED_VERSIONS.join(", ")})`);
   }
   if (!Array.isArray(payload.items) || payload.items.length === 0) {
     throw new Error("payload has no items");
@@ -231,9 +357,37 @@ export function validate(payload) {
       `payload is incomplete: it declares ${payload.n} items but contains ${payload.items.length}`,
     );
   }
+
+  const hasIds = payload.items.some((item) => item && !item.u && item.i);
+  if (hasIds) {
+    // Id-based items are only resolvable against an authenticated server, so the
+    // payload must carry both. Without them the queue would silently become a
+    // list of 404s, which is worse than refusing the payload.
+    assertSafeUrl(String(payload.server || ""));
+    if (typeof payload.token !== "string" || payload.token.length === 0) {
+      throw new Error("payload carries item ids but no token to build their URLs with");
+    }
+    if (UNSAFE_URL_CHARS.test(payload.token)) {
+      throw new Error("payload token contains whitespace or control characters");
+    }
+    // Deliberately narrow: these are the characters every implementation can
+    // place in a URL without percent-encoding, so the JavaScript, the PowerShell
+    // handler and the Python reference cannot diverge on escaping. Emby access
+    // tokens are hex, so this costs nothing in practice.
+    if (!/^[A-Za-z0-9._~-]+$/.test(payload.token)) {
+      throw new Error(
+        "payload token contains characters that would need percent-encoding; the three implementations would disagree on the escaped form",
+      );
+    }
+  }
+
   for (const item of payload.items) {
-    if (!item || typeof item.u !== "string") throw new Error("payload item is not an absolute URL");
-    assertSafeUrl(item.u);
+    if (!item || typeof item !== "object") throw new Error("payload item is not an object");
+    if (item.u !== undefined) {
+      assertSafeUrl(item.u);
+    } else {
+      assertSafeItemId(item.i);
+    }
   }
   return true;
 }

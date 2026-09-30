@@ -71,8 +71,9 @@ handler **for the current user only**, without administrator rights and without
 disturbing any other user on the machine.
 
 After installing, open a `vlc://` link once from the browser. **Chrome and Edge
-ask once** ("Open vlc?") and offer **Always allow** — tick the box to stop
-prompting. Firefox remembers the choice after its own checkbox prompt.
+ask once** ("Open vlc?") and then remember your answer for that site. The dialog's
+"Always allow" checkbox was removed in Chrome 77, so its absence is expected; it
+returns only under the `ExternalProtocolDialogShowAlwaysOpenCheckbox` policy.
 
 ---
 

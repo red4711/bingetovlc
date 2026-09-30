@@ -212,8 +212,8 @@ custom URI schemes, not a bingetovlc bug.
 At worst: **an unauthenticated queue.**
 
 * A page can construct `vlc://open?d=…` with a payload it builds itself and
-  cause Chrome to prompt (or, if the user has ticked *Always allow*, launch the
-  handler). bingetovlc's own design goal — "the whole queue travels as a single
+  cause Chrome to prompt, and — once the user has accepted for that origin — launch
+  the handler. bingetovlc's own design goal — "the whole queue travels as a single
   argument, and the handler runs for a fraction of a second" — is exactly the
   shape a hostile page would abuse: it can queue arbitrary URLs in VLC on the
   user's machine.
@@ -236,9 +236,12 @@ At worst: **an unauthenticated queue.**
 
 ### 5.3 Reducing the exposure
 
-* Untick or avoid *Always allow* if you want a prompt on every `vlc://`
-  launch. (The prompt is Chrome's; the exact wording and whether it remembers
-  per-origin is Chrome behaviour and **not verified** here.)
+* The prompt is Chrome's and its decision is remembered **per origin** (preference
+  `protocol_handler.allowed_origin_protocol_pairs`), so there is no checkbox to
+  untick: the "Always open" box was removed in Chrome 77 and now needs an enterprise
+  policy. The ways to get a prompt every time are to use a fresh profile, to clear
+  the site's permissions, or to use the `.m3u` download path instead, which never
+  fires the scheme.
 * Use a browser profile, or a browser, that you keep for trusted sites only.
 * Uninstall the scheme (`install.ps1 -Uninstall`) if you no longer want any page
   to be able to reach VLC this way.

@@ -179,9 +179,15 @@ test("a payload with a non-zero trailing-bit tail is rejected", () => {
 // ---------------------------------------------------------------------------
 
 test("PAYLOAD_VERSION and the length guard rails are the frozen values", () => {
-  assert.equal(PAYLOAD_VERSION, 1);
-  assert.equal(MAX_URI_LENGTH, 6000);
-  assert.equal(MAX_URI_ITEMS, 60);
+  assert.equal(PAYLOAD_VERSION, 2);
+  // 1800 is not arbitrary. Chromium hands an external-protocol URI to the Windows
+  // shell through ShellExecuteA, which is bound by INTERNET_MAX_URL_LENGTH
+  // (~2046 characters); over that length Chrome shows its prompt and then does
+  // nothing at all when the user accepts. The budget has to leave headroom for the
+  // scheme, the query key and registry quoting.
+  assert.equal(MAX_URI_LENGTH, 1800);
+  assert.ok(MAX_URI_LENGTH < 2046, "the URI budget must stay under the Windows hand-off cap");
+  assert.equal(MAX_URI_ITEMS, 200);
 });
 
 test("a payload with the wrong version is rejected with a versioned message", () => {
@@ -262,18 +268,57 @@ function payloadWithItems(count) {
 test("chooseHandoff: exactly MAX_URI_ITEMS stays a URI, one more goes to download", () => {
   const atMax = payloadWithItems(MAX_URI_ITEMS);
   const over = payloadWithItems(MAX_URI_ITEMS + 1);
-  // Guard the premise: at MAX items the URI must still fit the length budget,
-  // otherwise this would be testing the length branch, not the item branch.
-  assert.ok(estimatedUriLength(atMax) <= MAX_URI_LENGTH, "premise: MAX_URI_ITEMS payload must fit");
+  // Isolate the item branch from the byte branch with a generous byte budget:
+  // otherwise this measures whichever limit happens to bite first (and since v2
+  // the byte budget is usually the one that does).
+  const opts = { maxUriLength: 10_000_000, maxItems: MAX_URI_ITEMS };
+  assert.ok(
+    estimatedUriLength(atMax, "vlc") > MAX_URI_LENGTH,
+    "premise: a MAX_URI_ITEMS payload is expected to exceed the default byte budget",
+  );
 
-  const atDecision = chooseHandoff(atMax, "vlc");
+  const atDecision = chooseHandoff(atMax, "vlc", opts);
   assert.equal(atDecision.mode, "uri");
   assert.equal(atDecision.items, MAX_URI_ITEMS);
 
-  const overDecision = chooseHandoff(over, "vlc");
+  const overDecision = chooseHandoff(over, "vlc", opts);
   assert.equal(overDecision.mode, "download");
   assert.equal(overDecision.reason, "too-many-items");
   assert.equal(overDecision.maxItems, MAX_URI_ITEMS);
+});
+
+test("a 28 episode season of ids fits the Windows hand-off cap", () => {
+  // The regression this guards: with full stream URLs (payload v1) this queue was
+  // 5,471 bytes, i.e. over the ~2046 character ShellExecute cap, so on Windows the
+  // user would have seen Chrome's prompt and then nothing at all. Ids are what
+  // make the season queue work.
+  const items = Array.from({ length: 28 }, (_, index) => ({
+    id: String(3020743 + index),
+    title: `S01E${String(index + 1).padStart(2, "0")} A Reasonably Long Episode Title`,
+    duration: 1560,
+    season: 1,
+    episode: index + 1,
+  }));
+  const payload = build({
+    source: "emby",
+    server: "https://media.example.com",
+    token: "0123456789abcdef0123456789abcdef",
+    title: "Frieren — Season 1",
+    scope: "season",
+    items,
+  });
+  const uri = launchUri(payload, "vlc");
+
+  assert.ok(uri.length < 2046, `the season URI must fit the Windows cap (got ${uri.length})`);
+  assert.ok(uri.length <= MAX_URI_LENGTH, `the season URI must fit the project budget (got ${uri.length})`);
+  assert.equal(payload.items.length, 28, "the queue must stay complete");
+  assert.ok(payload.items.every((item) => item.i), "ids must survive the trim");
+  assert.ok(payload.items.every((item) => item.s === 1 && item.e >= 1), "season/episode numbers must survive");
+  assert.equal(payload.trimmed, "titles", "titles are what gets sacrificed, and it is recorded");
+  assert.ok(!uri.includes("api_key"), "the URI must not carry full stream URLs any more");
+
+  const decision = chooseHandoff(payload, "vlc");
+  assert.equal(decision.mode, "uri", "a whole season must still be one click, not a download");
 });
 
 /** Find a payload whose estimated URI length is exactly `target`. */

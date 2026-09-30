@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decode, encode, launchUri, chooseHandoff } from "../../src/core/payload.js";
+import { decode, encode, launchUri, chooseHandoff, resolveItemUrl } from "../../src/core/payload.js";
 import { buildM3u } from "../../src/core/m3u.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +66,7 @@ for (const vector of doc.vectors) {
   const urls = lines.filter((line) => !line.startsWith("#"));
   assert(urls.length === payload.items.length, `${name}: one URL per item expected`);
   assert(
-    urls.every((url, index) => url === payload.items[index].u),
+    urls.every((url, index) => url === resolveItemUrl(payload, payload.items[index])),
     `${name}: URLs must appear in payload order (playlist order is the product)`,
   );
   assert(!m3uShareable.includes("api_key"), `${name}: shareable m3u leaked a token`);

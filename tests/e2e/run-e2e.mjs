@@ -28,7 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { decode } from "../../src/core/payload.js";
+import { decode, resolveItemUrl } from "../../src/core/payload.js";
 import {
   FAKE_ORIGIN,
   FAKE_PORT,
@@ -213,8 +213,15 @@ async function waitFor(cdp, expression, timeoutMs, label) {
   throw new Error(`timed out after ${timeoutMs}ms waiting for ${label || expression} (last: ${JSON.stringify(last)})`);
 }
 
+/**
+ * The episode ids in a payload, whichever shape it carries: v2 items carry an id
+ * (and the handler builds the URL), v1 items and the generic adapter carry a full
+ * URL. Both have to be understood here, because the id shape is the whole reason a
+ * season queue fits inside the Windows hand-off cap.
+ */
 function idsFromPayload(payload) {
   return (payload.items || []).map((item) => {
+    if (item.i) return String(item.i);
     const match = /\/Videos\/([^/]+)\/stream/.exec(item.u || "");
     return match ? match[1] : null;
   });
@@ -414,10 +421,22 @@ export async function runE2e({ quiet = false } = {}) {
       );
 
       const items = payload?.items || [];
+      const resolved = items.map((item) => resolveItemUrl(payload, item));
       record(
-        `[${result.key}] every item carries the API token and Static=true`,
-        items.length > 0 && items.every((item) => item.u.includes(`api_key=${FAKE_TOKEN}`) && /[?&]Static=true(&|$)/i.test(item.u)),
-        items.length ? `${items.length} item(s), e.g. ${items[0].u}` : "no items",
+        `[${result.key}] every item resolves to a direct-play URL with the token and Static=true`,
+        resolved.length > 0 &&
+          resolved.every((url) => url.includes(`api_key=${FAKE_TOKEN}`) && /[?&]Static=true(&|$)/i.test(url)),
+        resolved.length ? `${resolved.length} item(s), e.g. ${resolved[0]}` : "no items",
+      );
+      record(
+        `[${result.key}] the URI carries ids, not stream URLs (the ~2 KB Windows cap)`,
+        items.length > 0 && items.every((item) => item.i && !item.u) && payload?.token === FAKE_TOKEN,
+        `payload v${payload?.v}, ${items.length} item(s), ${result.uri?.length ?? 0} byte URI`,
+      );
+      record(
+        `[${result.key}] the hand-off URI fits the Windows ShellExecute cap`,
+        (result.uri?.length ?? 0) < 2046,
+        `${result.uri?.length ?? 0} bytes (cap ~2046)`,
       );
 
       if (result.expectStart !== null) {

@@ -26,8 +26,8 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 | Symptom | Most likely cause | Fix |
 |---|---|---|
 | Chrome never asks to open VLC | Scheme not registered, or registered for a different user | Run the installer for your account; re-check with `-Diagnostics` |
-| Chrome asks every time | *Always allow* was never ticked, or a new origin is prompting | Tick **Always allow** the first time; §2.2 |
-| Chrome offers no **Always allow** option | Chrome only offers it in some dialogs/contexts | §2.3 |
+| Chrome asks every time | The allow decision is recorded per origin; a different hostname is a different origin | Accept the prompt for that origin; §2.2 |
+| Chrome offers no **Always allow** option | The checkbox was removed in Chrome 77 and needs an enterprise policy to return | It is expected; accept the prompt once per origin; §2.3 |
 | Clicking **Play in VLC** does nothing | Payload failed to decode, or the handler did not run | Read the handler log; try `-SelfTest`; §3 |
 | VLC opens but sits at 0 % | Stream URL not returning bytes (auth or reachability) | §4, and the 401 section §5 |
 | VLC plays a few seconds then stops | Connection interrupted; caching too low; server unreachable intermittently | §4.2 |
@@ -43,7 +43,7 @@ powershell -File .\install.ps1 -Diagnostics   # VLC path + scheme registration s
 
 ---
 
-## 2. Chrome: never asks, asks every time, or no *Always allow*
+## 2. Chrome: never asks, asks every time, or offers no *Always allow*
 
 ### 2.1 Chrome never asks
 
@@ -65,26 +65,32 @@ reports the scheme as absent for your account, re-run the install step. See
 
 ### 2.2 Chrome asks every time
 
-**Cause.** The external-protocol prompt appears each launch because *Always
-allow* was not recorded for that origin. The first time you click **Play in
-VLC**, tick **Always allow** in the prompt. If you only press **Open**, Chrome
-will ask again next time.
+**Cause.** Chrome records an external-protocol allow decision **per origin**, and
+only for potentially-trustworthy origins (https), in the profile preference
+`protocol_handler.allowed_origin_protocol_pairs`. If no decision is recorded for
+that origin, every hand-off prompts.
 
-**Fix.** Tick **Always allow**. If it still asks every time, note which site
-origin is prompting — the permission is generally recorded per origin, so a
-different Emby hostname (for example a LAN address and a WAN address) can each
-prompt. This per-origin behaviour is **assumed** (standard Chrome behaviour)
-rather than verified for every Chrome version.
+**Fix.** Accept the prompt once for that origin. If it asks again next time, check
+whether you are reaching the same Emby server through a different address: a LAN
+address and a WAN address are different origins, and each one prompts separately.
+Sources: Chromium's `chrome/browser/external_protocol/external_protocol_handler.cc`
+and `chrome/common/pref_names.cc`.
 
 ### 2.3 Chrome offers no *Always allow* option
 
-**Cause.** Not every external-protocol dialog offers the checkbox; some Chrome
-versions only present **Open**/**Cancel**. That is a browser behaviour, not
-something bingetovlc controls.
+**Cause.** The "Always open" checkbox was **removed from Chrome's dialog in Chrome
+77**. It only comes back when an administrator enables the
+`ExternalProtocolDialogShowAlwaysOpenCheckbox` policy, so on an ordinary profile the
+checkbox is expected to be absent. Chrome's per-origin memory is the mechanism that
+actually stops the prompting.
 
-**Fix.** None available from the project side. Accept the prompt, or use the
-**Copy / Download .m3u** buttons, which need no protocol handler at all — a
-downloaded `.m3u` opens the same queue in VLC on double-click.
+**Fix.** Nothing is broken: accept the prompt, and Chrome remembers that origin. If
+you want no prompt at all, use **Copy / Download .m3u** — a downloaded `.m3u` opens
+the same queue in VLC on double-click and never touches the protocol handler.
+
+**On Firefox** the scheme is never handed over until you opt in: set
+`network.protocol-handler.expose.vlc` to `false` in `about:config`, then click a
+Play button and pick VLC in the prompt.
 
 ---
 
@@ -333,11 +339,13 @@ switches to the download path when either limit is exceeded:
 
 | Condition | Mode | Reason |
 |---|---|---|
-| more than `60` items | `download` | `too-many-items` |
-| URI longer than `6000` bytes | `download` | `uri-too-long` |
+| more than `200` items | `download` | `too-many-items` |
+| URI longer than `1800` bytes | `download` | `uri-too-long` |
 
-A 28-episode season is ~5,471 bytes and stays a URI. A 90-episode series is
-~16.8 KB and does not. Instead of firing a `vlc://` URI, the script hands you an
+A 28-episode season is ~1,584 bytes as ids and stays a URI. (With full stream URLs
+it was 5,471 bytes, which is past the ~2,046-character limit Windows applies to an
+external-protocol URI — that version would have failed by doing nothing at all.) A
+120-episode series is ~9.7 KB and does not fit. Instead of firing a `vlc://` URI, the script hands you an
 `.m3u` file; double-clicking it opens the same queue in VLC.
 
 **Fix.** Nothing to fix — this is the fallback working. If you expected a URI

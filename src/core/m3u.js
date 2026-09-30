@@ -14,6 +14,8 @@
  * stripped — useful for pasting into a bug report without leaking a token.
  */
 
+import { labelForItem, resolveItemUrl } from "./payload.js";
+
 /** `#EXTINF` titles are a single line by definition. */
 function oneLine(text) {
   return String(text == null ? "" : text)
@@ -53,13 +55,17 @@ export function buildM3u(payload, { includeTokens = true, newline = "\n" } = {})
   if (payload.title) lines.push(`#PLAYLIST:${oneLine(payload.title)}`);
 
   for (const item of payload.items) {
-    lines.push(`#EXTINF:${m3uDuration(item.d)},${oneLine(item.t || item.u)}`);
+    lines.push(`#EXTINF:${m3uDuration(item.d)},${oneLine(labelForItem(payload, item))}`);
     if (opts.cache) lines.push(`#EXTVLCOPT:network-caching=${Math.round(Number(opts.cache))}`);
     // Header options exist for the generic (non-Emby) adapters, where a stream
     // may be referrer-locked. Emby never needs them: its token is in the URL.
     if (opts.referrer) lines.push(`#EXTVLCOPT:http-referrer=${oneLine(opts.referrer)}`);
     if (opts.ua) lines.push(`#EXTVLCOPT:http-user-agent=${oneLine(opts.ua)}`);
-    lines.push(includeTokens ? safeUrl(item.u) : stripQuery(safeUrl(item.u)));
+    // The URL may be carried in the payload or built from the item id, depending
+    // on the payload version; resolveItemUrl() handles both so the browser, the
+    // PowerShell handler and the Python reference stay byte-identical.
+    const resolved = safeUrl(resolveItemUrl(payload, item));
+    lines.push(includeTokens ? resolved : stripQuery(resolved));
   }
   return lines.join(newline) + newline;
 }

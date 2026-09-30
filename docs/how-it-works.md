@@ -213,17 +213,20 @@ one file write and one process spawn.
 
 | Condition | Mode | Reason |
 |---|---|---|
-| `items.length > 60` | `download` | `too-many-items` |
-| encoded URI longer than `6000` bytes | `download` | `uri-too-long` |
+| `items.length > 200` | `download` | `too-many-items` |
+| encoded URI longer than `1800` bytes | `download` | `uri-too-long` |
 | otherwise | `uri` | — |
 
-`MAX_URI_LENGTH = 6000` and `MAX_URI_ITEMS = 60` are the project's own
-conservative budget, not a measured platform limit. The numbers are chosen so
-that a realistic season fits with headroom; a whole large series does not, and
+`MAX_URI_LENGTH = 1800` is **not** a preference — it is imposed by Windows.
+Chromium hands an external-protocol URI to the shell with `ShellExecuteA`, which is
+bound by `INTERNET_MAX_URL_LENGTH` (about 2,046 characters), and over that length
+Chrome shows its permission prompt and then does nothing at all. See
+[`vlc-notes.md`](vlc-notes.md) for the citations. The payload therefore carries item
+ids rather than stream URLs, `MAX_URI_ITEMS = 200` is only a secondary guard, and a
+whole large series still
 falls back to a downloaded `.m3u` the user double-clicks. Both paths produce the
-same playlist; the download path exists because a URI has a practical size
-ceiling that the project has not characterised precisely, and because a queue of
-hundreds of episodes should not depend on it.
+same playlist, and on the download path the payload is rebuilt without the URI
+budget, so the file keeps its full episode titles.
 
 ---
 
@@ -348,11 +351,18 @@ stall in VLC mid-binge — see [`troubleshooting.md`](troubleshooting.md).
 
 ---
 
-## 8. How a 28 episode season becomes a 5.5 KB URI
+## 8. How a 28 episode season becomes a 1.6 KB URI
 
-A real season of 28 episodes produces a URI of **5,471 bytes** — comfortably
-inside the 6,000 byte budget, and the point at which the design is most clearly
-size-sensitive.
+This is the clearest case of a measurement changing the design, so it is worth
+reading even if you skip the rest of this document.
+
+The same season of 28 episodes is **5,471 bytes** when the payload carries full
+stream URLs, and **1,584 bytes** when it carries item ids (both measured; the second
+one in the browser test). Only the second works on Windows: Chromium hands the URI
+to `ShellExecuteA`, which is capped at about 2,046 characters, and over that length
+Chrome shows its permission prompt and then does nothing at all — no playlist and no
+error. Payload v1 was the first number, and it would have failed silently on exactly
+the feature this project exists for.
 
 The arithmetic that gets there:
 
@@ -442,7 +452,7 @@ font attachments is a VLC behaviour, not a bingetovlc one; see
 
 ## Related documents
 
-* [`SPEC.md`](SPEC.md) — the frozen interface contract (payload v1, M3U rules,
+* [`SPEC.md`](SPEC.md) — the frozen interface contract (payload v2, M3U rules,
   API contract, module layout).
 * [`security.md`](security.md) — the token in the URL, the temporary playlist,
   the registry, and the threat model.
