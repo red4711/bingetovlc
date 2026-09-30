@@ -295,8 +295,22 @@ detail. Renaming one of these breaks CI on purpose.
 | `#bingetovlc-download` | save the queue as an `.m3u` |
 | `#bingetovlc-uri` | the produced URI, or a description of why a file is used instead |
 | `#bingetovlc-scope` | scope selector; its option values are the scope names |
+| `#bingetovlc-options-toggle` | the Settings disclosure; must set `aria-expanded` |
+| `#bingetovlc-options` | the settings container the disclosure shows and hides; the controls live here, never inside the toggle |
+| `#bingetovlc-list-head` | queue count line, empty when nothing is queued |
 | `#bingetovlc-diagnostics` | copy a token-redacted report |
+| `#bingetovlc-copy-uri` | copy the URI |
+| `#bingetovlc-hide` | remove the panel |
 | `#bingetovlc-banner` | transient outcome banner (created on demand) |
+
+`#bingetovlc-uri` holds **only** the URI, or a sentence explaining why a file is
+used instead: the test anchor-matches its text against the scheme, so headings
+belong in siblings (`#bingetovlc-uri-label`, shown only with the block).
+
+Queued entries must be direct children of `#bingetovlc-list` — the panel numbers
+nothing, and the test counts those children — and the same goes for
+`#bingetovlc-options`: its children are the setting rows, because a test asserts
+the disclosure actually moves them.
 
 Observation hook: when the page sets `window.__BINGETOVLC_TEST_MODE__ = true`
 **before the script runs**, no navigation to the custom scheme is attempted and a

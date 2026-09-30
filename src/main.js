@@ -116,7 +116,7 @@ async function ensureQueue(panel, { force = false } = {}) {
       const before = queue.items.length;
       queue.items = queue.items.filter((entry) => !entry.played);
       if (queue.items.length !== before) {
-        queue.warnings.push(`${before - queue.items.length} already-watched episode(s) were skipped (a setting you enabled).`);
+        queue.warnings.push(`${plural(before - queue.items.length, "already-watched episode")} skipped (a setting you enabled).`);
       }
     }
     state.queue = queue;
@@ -131,10 +131,17 @@ async function ensureQueue(panel, { force = false } = {}) {
   }
 }
 
+/** "1 item" / "3 items" — used in every user-facing count. */
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 function summarize(queue) {
   if (!queue || !queue.items.length) return "Nothing to queue";
-  const episodes = queue.items.length;
-  return `${queue.title} — ${episodes} item${episodes === 1 ? "" : "s"}, ${formatDuration(queue.items)}`;
+  // The count lives in the queue header below, so repeating it here read as
+  // "Season 1 — 28 episodes · 28 items". Title and runtime only.
+  const parts = [queue.title];
+  const runtime = formatDuration(queue.items);
+  if (runtime && runtime !== "unknown") parts.push(runtime);
+  return parts.join(" · ");
 }
 
 async function refresh(panel) {
@@ -182,20 +189,22 @@ async function refresh(panel) {
 
 function wireSettings(panel, win) {
   const settings = state.settings;
+  // Grouped by what they affect, so the panel reads as "what VLC does" and then
+  // "the plumbing" instead of one flat list of five checkboxes and two fields.
   const rows = [
-    ["fullscreen", "Open VLC fullscreen"],
-    ["oneInstance", "Reuse a running VLC instance"],
-    ["playAndExit", "Close VLC when the queue ends"],
-    ["skipPlayed", "Skip already-watched episodes"],
-    ["genericAdapter", "Try the experimental generic adapter (non-Emby pages)"],
+    ["fullscreen", "Open VLC fullscreen", "VLC"],
+    ["oneInstance", "Reuse a running VLC instance", "VLC"],
+    ["playAndExit", "Close VLC when the queue ends", "VLC"],
+    ["skipPlayed", "Skip already-watched episodes", "VLC"],
+    ["genericAdapter", "Try the experimental generic adapter (non-Emby pages)", "Advanced"],
   ];
-  for (const [key, label] of rows) {
+  for (const [key, label, group] of rows) {
     const input = checkbox(document, `bingetovlc-opt-${key}`, Boolean(settings[key]));
     input.addEventListener("change", () => {
       state.settings = updateSetting(win, key, input.checked);
       if (key === "genericAdapter") bootstrapGeneric(win);
     });
-    panel.addOption(label, input);
+    panel.addOption(label, input, { group });
   }
   const scheme = selectInput(
     document,
@@ -209,13 +218,15 @@ function wireSettings(panel, win) {
   scheme.addEventListener("change", () => {
     state.settings = updateSetting(win, "scheme", scheme.value);
   });
-  panel.addOption("URI scheme", scheme);
+  scheme.setAttribute("title", "The registered scheme Chrome hands to the VLC handler");
+  panel.addOption("URI scheme", scheme, { group: "Advanced" });
 
   const cache = numberInput(document, "bingetovlc-opt-cache", settings.networkCache, { min: 0, max: 60000 });
+  cache.setAttribute("title", "0 uses VLC's own default");
   cache.addEventListener("change", () => {
     state.settings = updateSetting(win, "networkCache", Number(cache.value) || 0);
   });
-  panel.addOption("Network cache (ms, 0 = VLC default)", cache);
+  panel.addOption("Network cache (ms)", cache, { group: "Advanced" });
 }
 
 async function act(win, panel, kind) {
@@ -229,7 +240,7 @@ async function act(win, panel, kind) {
 
     if (kind === "preview") {
       panel.setUri(uriFor(payload, state.settings.scheme));
-      panel.setStatus(`Preview: ${queue.items.length} item(s). Nothing was launched.`);
+      panel.setStatus(`Preview: ${plural(queue.items.length, "item")}. Nothing was launched.`);
       return;
     }
     if (kind === "download") {
@@ -248,10 +259,10 @@ async function act(win, panel, kind) {
         : deliver(payloadFor(queue, state.settings, null), win, { scheme: state.settings.scheme });
     state.lastHandoff = handoff;
     if (handoff.mode === "uri") {
-      panel.setStatus(`Sent ${handoff.items} item(s) to the VLC handler (${handoff.length} byte URI).`);
+      panel.setStatus(`Sent ${plural(handoff.items, "item")} to the VLC handler (${handoff.length} byte URI).`);
       showBanner(
         document,
-        `Opening ${handoff.items} item(s) in VLC. Chrome asks for permission the first time; accepting is remembered for this site (the "Always allow" checkbox is hidden unless your administrator enables it by policy).`,
+        `Opening ${plural(handoff.items, "item")} in VLC. Chrome asks for permission the first time; accepting is remembered for this site (the "Always allow" checkbox is hidden unless your administrator enables it by policy).`,
         { kind: "info" },
       );
     } else {

@@ -328,6 +328,108 @@ async function runScenario(cdp, scenario, index) {
   };
 }
 
+/**
+ * Panel layout regression checks.
+ *
+ * These exist because two shipped bugs were invisible to every assertion above.
+ * The settings were appended into the Settings button itself, so the disclosure
+ * toggled an empty container while the button grew to 392px and stretched the
+ * download button beside it. And because flex shrinking removes the automatic
+ * minimum size from anything with a non-visible overflow, a 28-item queue
+ * rendered as 4px-tall clipped lines: present in the DOM, absent on screen.
+ *
+ * Both are layout facts, so they are checked by measuring the rendered page.
+ */
+async function checkPanelLayout(cdp, record) {
+  const pageUrl = `${FAKE_ORIGIN}/web/index.html?route=item&id=${encodeURIComponent(SEASON_ID)}&_n=${Date.now()}layout`;
+  await cdp.send("Page.navigate", { url: pageUrl });
+  await waitFor(cdp, `document.readyState === "complete"`, 15000, "page load");
+  await evaluate(cdp, HANDOFF_HOOK);
+  await waitFor(
+    cdp,
+    `(document.getElementById("bingetovlc-list")?.children.length ?? -1) > 1`,
+    15000,
+    "a multi-item queue to measure",
+  );
+
+  const shape = await evaluate(
+    cdp,
+    `const ids = ["bingetovlc-panel","bingetovlc-summary","bingetovlc-status","bingetovlc-list","bingetovlc-list-head",
+                 "bingetovlc-play","bingetovlc-preview","bingetovlc-download","bingetovlc-uri","bingetovlc-scope",
+                 "bingetovlc-options","bingetovlc-options-toggle","bingetovlc-copy-uri","bingetovlc-diagnostics","bingetovlc-hide"];
+     const toggle = document.getElementById("bingetovlc-options-toggle");
+     const options = document.getElementById("bingetovlc-options");
+     const row = document.getElementById("bingetovlc-list").children[0];
+     const summary = document.getElementById("bingetovlc-summary");
+     return {
+       missing: ids.filter((id) => !document.getElementById(id)),
+       controlsInsideToggle: toggle.querySelectorAll("input, select").length,
+       controlsInsideOptions: options.querySelectorAll("input, select").length,
+       optionsHiddenInitially: options.getBoundingClientRect().height === 0,
+       ariaExpandedInitially: toggle.getAttribute("aria-expanded"),
+       summaryHeight: Math.round(summary.getBoundingClientRect().height),
+       rowHeight: row ? Math.round(row.getBoundingClientRect().height) : 0,
+       rowText: row ? row.textContent : "",
+       uriLabelHidden: getComputedStyle(document.querySelector("#bingetovlc-panel .bingetovlc-uri-label")).display === "none",
+     };`,
+  );
+
+  record("[layout] every contract id in SPEC §8 exists", shape.missing.length === 0, shape.missing.join(", ") || "all 15 present");
+  record(
+    "[layout] setting controls live in the container, not inside the disclosure button",
+    shape.controlsInsideToggle === 0 && shape.controlsInsideOptions >= 5,
+    `inside toggle=${shape.controlsInsideToggle}, inside container=${shape.controlsInsideOptions}`,
+  );
+  record(
+    "[layout] the disclosure starts collapsed",
+    Boolean(shape.optionsHiddenInitially) && shape.ariaExpandedInitially === "false",
+    `aria-expanded=${shape.ariaExpandedInitially}`,
+  );
+  record(
+    "[layout] a multi-item queue renders legible rows, not clipped lines",
+    shape.summaryHeight > 8 && shape.rowHeight > 8,
+    `summary=${shape.summaryHeight}px, first row=${shape.rowHeight}px (${shape.rowText})`,
+  );
+  record("[layout] the hand-off URI heading is hidden along with its block", Boolean(shape.uriLabelHidden));
+
+  const expanded = await evaluate(
+    cdp,
+    `const toggle = document.getElementById("bingetovlc-options-toggle");
+     toggle.click();
+     const options = document.getElementById("bingetovlc-options");
+     const rect = document.getElementById("bingetovlc-panel").getBoundingClientRect();
+     return {
+       ariaExpanded: toggle.getAttribute("aria-expanded"),
+       optionsHeight: Math.round(options.getBoundingClientRect().height),
+       fits: rect.top >= 0 && rect.bottom <= innerHeight,
+       panelHeight: Math.round(rect.height),
+       viewport: innerHeight,
+     };`,
+  );
+  record(
+    "[layout] clicking the disclosure reveals the settings",
+    expanded.ariaExpanded === "true" && expanded.optionsHeight > 60,
+    `aria-expanded=${expanded.ariaExpanded}, ${expanded.optionsHeight}px`,
+  );
+  record(
+    "[layout] the panel stays fully on screen with the settings open",
+    Boolean(expanded.fits),
+    `panel ${expanded.panelHeight}px in a ${expanded.viewport}px viewport`,
+  );
+
+  const collapsed = await evaluate(
+    cdp,
+    `document.querySelector("#bingetovlc-panel .bingetovlc-collapse").click();
+     const body = getComputedStyle(document.querySelector("#bingetovlc-panel .bingetovlc-body")).display;
+     return { body, height: Math.round(document.getElementById("bingetovlc-panel").getBoundingClientRect().height) };`,
+  );
+  record(
+    "[layout] collapsing leaves just the header",
+    collapsed.body === "none" && collapsed.height < 80,
+    `body=${collapsed.body}, ${collapsed.height}px tall`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -467,6 +569,14 @@ export async function runE2e({ quiet = false } = {}) {
           `opts.start = ${payload?.opts?.start} (expected ${result.expectStart})`,
         );
       }
+    }
+
+    // Panel layout, measured on the rendered page: no DOM-level assertion above
+    // can see a control that is present but rendered 4px tall and clipped.
+    try {
+      await checkPanelLayout(cdp, record);
+    } catch (error) {
+      record("[layout] panel layout checks ran", false, String(error.message).slice(0, 200));
     }
 
     const byKey = Object.fromEntries(pages.map((page) => [page.key, page]));

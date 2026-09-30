@@ -9,30 +9,56 @@
  * when Chrome refuses the scheme, the user has to be told what just happened and
  * what to click next, because "nothing happened" is otherwise the entire user
  * experience.
+ *
+ * Styling shares the panel's tokens by repeating the values, not by importing
+ * them: tools/build.py concatenates these modules into one file, and a shared
+ * constant would be a duplicate-symbol build error. `element` is deliberately
+ * not defined here for the same reason.
  */
 
 export const BANNER_ID = "bingetovlc-banner";
 
-// Prefixed for the same reason as the panel's stylesheet: one flattened scope.
 const BANNER_STYLE = `
 #${BANNER_ID} {
   all: initial;
-  position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px;
-  z-index: 2147483001; max-width: 560px;
-  padding: 10px 14px; border-radius: 9px;
+  box-sizing: border-box;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  z-index: 2147483001;
+  max-width: min(560px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px 11px 14px;
+  border-radius: 10px;
+  color-scheme: dark;
   font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color: #eaeef6; background: rgba(18, 20, 27, 0.97);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
-  display: flex; gap: 10px; align-items: center;
+  color: #e9edf5;
+  background: #14161d;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-left: 3px solid #2f7cf6;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
 }
+#${BANNER_ID}.bingetovlc-banner-warn { border-left-color: #ffc857; }
+#${BANNER_ID}.bingetovlc-banner-error { border-left-color: #ff9d9d; }
+#${BANNER_ID} .bingetovlc-banner-text { flex: 1 1 auto; min-width: 0; }
 #${BANNER_ID} button {
-  all: unset; cursor: pointer; padding: 5px 9px; border-radius: 6px;
-  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.14);
+  all: unset;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  cursor: pointer;
+  padding: 5px 9px;
+  border-radius: 7px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
-#${BANNER_ID}.bingetovlc-banner-warn { border-color: #ffd479; }
-#${BANNER_ID}.bingetovlc-banner-error { border-color: #ff9d9d; }
-#${BANNER_ID} .bingetovlc-banner-text { flex: 1 1 auto; }
+#${BANNER_ID} button:hover { background: rgba(255, 255, 255, 0.16); }
+#${BANNER_ID} .bingetovlc-banner-close { padding: 5px 8px; color: rgba(233, 237, 245, 0.62); }
+#${BANNER_ID} :focus-visible { outline: 2px solid #2f7cf6; outline-offset: 1px; }
 `;
 
 export function showBanner(doc, message, { kind = "info", timeoutMs = 9000, actionLabel = null, onAction = null } = {}) {
@@ -44,6 +70,8 @@ export function showBanner(doc, message, { kind = "info", timeoutMs = 9000, acti
     doc.head.appendChild(style);
     banner = doc.createElement("div");
     banner.id = BANNER_ID;
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-live", "polite");
     doc.body.appendChild(banner);
   }
   banner.textContent = "";
@@ -60,6 +88,16 @@ export function showBanner(doc, message, { kind = "info", timeoutMs = 9000, acti
     });
     banner.appendChild(button);
   }
+  // Dismissing has to be possible without waiting out the timer, and without
+  // clicking through to the page underneath.
+  const dismiss = Object.assign(doc.createElement("button"), {
+    className: "bingetovlc-banner-close",
+    textContent: "\u00d7",
+    title: "Dismiss",
+  });
+  dismiss.setAttribute("aria-label", "Dismiss");
+  dismiss.addEventListener("click", () => banner.remove());
+  banner.appendChild(dismiss);
 
   if (banner._bingetovlcTimer) clearTimeout(banner._bingetovlcTimer);
   if (timeoutMs > 0) {
