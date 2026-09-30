@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose a new capability, adapter, or behaviour change.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/SPEC.md](https://github.com/red4711/bingetovlc/blob/main/docs/SPEC.md)
+        first: it is the frozen interface contract, and a proposal that changes
+        the payload or M3U format needs a `PAYLOAD_VERSION` bump. If you are
+        proposing a new site, read
+        [docs/adapters.md](https://github.com/red4711/bingetovlc/blob/main/docs/adapters.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-visible situation, not the implementation.
+      placeholder: "I want to queue only unwatched episodes of a season."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should bingetovlc do? Which page type, which button?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, or other ways to solve the same problem.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Userscript UI
+        - Userscript core (payload / ordering)
+        - Windows handler or installer
+        - New adapter (non-Emby site)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This keeps the handoff to a single URI where the queue fits the budget (no background service).
+          required: false
+        - label: This does not require an npm dependency.
+          required: false
+        - label: I understand a payload or M3U change needs a PAYLOAD_VERSION bump and regenerated vectors.
+          required: false

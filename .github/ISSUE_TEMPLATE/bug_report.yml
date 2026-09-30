@@ -1,0 +1,116 @@
+name: Bug report
+description: "Something did not work: nothing happened, the wrong episode played, or VLC stalled."
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before you start, read
+        [docs/troubleshooting.md](https://github.com/red4711/bingetovlc/blob/main/docs/troubleshooting.md)
+        — many symptoms have a known cause and fix, and the log path below is
+        covered there.
+
+        **Do not paste a token-bearing playlist.** Every URL in a normal `.m3u`
+        contains your Emby API token. Use the **shareable** playlist (query
+        strings stripped) or strip the token yourself. A public issue is a public
+        token. See
+        [docs/security.md](https://github.com/red4711/bingetovlc/blob/main/docs/security.md).
+
+  - type: input
+    id: emby-version
+    attributes:
+      label: Emby server version
+      description: "The exact version string your Emby server reports."
+      placeholder: "4.10.0.40"
+    validations:
+      required: true
+
+  - type: input
+    id: vlc-version
+    attributes:
+      label: VLC version
+      description: "From VLC's Help → About."
+      placeholder: "3.0.20"
+    validations:
+      required: true
+
+  - type: input
+    id: os-browser
+    attributes:
+      label: Operating system and browser
+      description: "Include the userscript manager (e.g. Tampermonkey) if relevant."
+      placeholder: "Windows 11 23H2, Chrome 121, Tampermonkey 5.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: page-type
+    attributes:
+      label: Page type
+      description: "Which kind of Emby page were you on when it failed?"
+      options:
+        - Movie
+        - Episode
+        - Season
+        - Series
+    validations:
+      required: true
+
+  - type: dropdown
+    id: handoff-path
+    attributes:
+      label: Which handoff path was used?
+      description: "Did the click try to fire the vlc:// URI, or did you use the .m3u download path? They exercise different code."
+      options:
+        - vlc:// URI (fired from the page)
+        - .m3u download (double-clicked the downloaded file)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: What happened
+      description: "Exactly what you saw, and what you expected instead."
+      placeholder: "Clicked Play in VLC, Chrome prompted, VLC opened but stayed at 0%."
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics output
+      description: "Paste the output of `powershell -File .\\install.ps1 -Diagnostics` (VLC path + scheme registration state)."
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: handler-log
+    attributes:
+      label: Handler log excerpt
+      description: "The tail of `%LOCALAPPDATA%\\bingetovlc\\logs\\handler.log`, including the exit code. The log should redact tokens, but read it before posting and strip anything that looks like a token if it did not."
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: shareable-playlist
+    attributes:
+      label: Shareable playlist or URI (tokens stripped)
+      description: "The queue with query strings removed — entries should read `https://…/Videos/123/stream` with no `api_key`. If you have a `vlc://open?d=…` URI, strip or decode-and-clean the payload first."
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have removed every Emby API token from anything I pasted here.
+          required: true
+        - label: I read docs/troubleshooting.md and this is not one of the listed symptoms.
+          required: false
