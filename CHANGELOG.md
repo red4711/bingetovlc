@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > the payload version is bumped when they do. Until 1.0, pin to a commit or tag
 > rather than assuming compatibility across releases.
 
+## [0.3.1] - 2026-09-30
+
+### Fixed
+
+* **Double-clicking the handler did not install anything.** With no arguments it
+  fell through to the URI path, logged `URI rejected: no URI argument was
+  supplied` and exited 2 — while the documentation said it would register and
+  confirm with a dialog. It now asks, registers, and reports the outcome in a
+  message box. Found after the first real installation on Windows, where the
+  registry check confirmed the PowerShell handler had been registered and then
+  blocked by antivirus.
+* The handler reported version `1.0.0`, which this project never released,
+  because the string was hard-coded. It is now injected from `package.json` by
+  the build, so a bug report cannot quote a version that does not exist.
+* The discovered VLC path read `C:\Program Files\VideoLAN\VLC/vlc.exe` — a joined
+  path mixing separators. The launch tolerated it; the `DefaultIcon` value
+  written to the registry did not, so the scheme had no usable icon.
+* The install summary promised Chrome's **Always allow** checkbox, which Chrome
+  removed in version 77. The text now describes what actually happens.
+
 ## [0.3.0] - 2026-09-30
 
 ### Changed
@@ -166,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the client's `ApiClient` global to appear is the least certain part of the
   design (see [`docs/how-it-works.md`](docs/how-it-works.md) §10).
 
+[0.3.1]: https://github.com/red4711/bingetovlc/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/red4711/bingetovlc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/red4711/bingetovlc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/red4711/bingetovlc/compare/v0.1.0...v0.2.0

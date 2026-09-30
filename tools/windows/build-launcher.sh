@@ -37,16 +37,26 @@ if [ ! -f "$SRC" ]; then
     exit 1
 fi
 
+# The version the handler reports, taken from package.json so a bug report cannot
+# name a version the project never released.
+VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$root/package.json" | head -1)
+VERSION=${VERSION:-0.0.0-dev}
+
 echo "zig : $("$ZIG" version) ($ZIG)"
 echo "src : $SRC"
+echo "ver : $VERSION"
 
 # 1) Windows PE32+ x86-64. -static so it has no MSVCRT runtime dependency beyond
 #    what mingw-w64 bundles, -s to strip symbols. This is the handler that is
 #    registered in HKCU\Software\Classes\{vlc,bingetovlc}\shell\open\command.
-"$ZIG" cc -target x86_64-windows-gnu -static -Os -s -o "$OUT_EXE" "$SRC"
+"$ZIG" cc -target x86_64-windows-gnu -static -Os -s \
+    -DHANDLER_VERSION="\"$VERSION\"" \
+    -o "$OUT_EXE" "$SRC"
 
 # 2) Native Linux build of the same source, for the byte-exactness selftest.
-"$ZIG" cc -DLAUNCHER_PORTABLE_TEST -Os -o "$OUT_LINUX" "$SRC"
+"$ZIG" cc -DLAUNCHER_PORTABLE_TEST -Os \
+    -DHANDLER_VERSION="\"$VERSION\"" \
+    -o "$OUT_LINUX" "$SRC"
 
 echo
 echo "windows : $OUT_EXE ($(stat -c%s "$OUT_EXE") bytes)"

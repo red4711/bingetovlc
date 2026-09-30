@@ -63,7 +63,14 @@
 #  define LAUNCHER_PORTABLE_TEST 0
 #endif
 
-#define HANDLER_VERSION "1.0.0"
+/*
+ * Fed from package.json by build-launcher.sh and by CI, so the version a bug
+ * report quotes is a version the project actually released. The fallback only
+ * applies to a bare `zig cc` invocation.
+ */
+#ifndef HANDLER_VERSION
+#  define HANDLER_VERSION "0.0.0-dev"
+#endif
 
 #define EXIT_OK        0
 #define EXIT_MALFORMED 2
@@ -153,8 +160,13 @@ static char *path_join(const char *a, const char *b) {
     buf_init(&out);
     if (a && *a) {
         buf_puts(&out, a);
+        /* Match the separator the base already uses: a Windows path joined with
+           '/' produced "C:\Program Files\VideoLAN\VLC/vlc.exe", which works for
+           CreateProcess but renders as a broken DefaultIcon value in the
+           registry. */
+        char sep = strchr(a, '\\') ? '\\' : '/';
         if (out.len > 0 && out.data[out.len - 1] != '/' && out.data[out.len - 1] != '\\')
-            buf_putc(&out, '/');
+            buf_putc(&out, sep);
     }
     buf_puts(&out, b ? b : "");
     return buf_detach(&out);
@@ -2259,8 +2271,9 @@ static int run_install(const char *schemespec, const char *vlcpath) {
     if (backed_up) printf("  (%d pre-existing scheme key(s) backed up under %s)\n", backed_up, bdir);
     show_scheme_summary("After:", names, count);
     puts("");
-    puts("Registration complete. Open a vlc:// link from Chrome/Edge; the browser asks once");
-    puts("and offers \"Always allow\" (check the box to stop the prompt).");
+    puts("Registration complete. Open a vlc:// link from Chrome/Edge: the browser asks");
+    puts("once and remembers your choice for that site. A permanent always-allow for");
+    puts("every site needs an enterprise policy (Chrome removed that checkbox in 77).");
     puts("Verify with: bingetovlc-handler.exe --diagnostics");
 
     if (GetConsoleWindow() == NULL) {
@@ -2329,6 +2342,43 @@ static int run_uninstall(const char *schemespec) {
  * main
  * =========================================================================== */
 
+/*
+ * Invoked by hand: a double-click passes no arguments, and the protocol handler
+ * always passes a URI. Before this existed a double-click fell through to the URI
+ * path, logged "URI rejected: no URI argument was supplied" into the log and
+ * exited with code 2 — no window, no registration, while the documentation
+ * promised it would install. Reported from a real machine.
+ */
+#if defined(_WIN32)
+static int run_manual(const char *vlcpath) {
+    int rc;
+    int answer = MessageBoxA(NULL,
+        "Register the vlc:// and bingetovlc:// handlers for this user?\n\n"
+        "OK     - register them (anything already registered is backed up first)\n"
+        "Cancel - change nothing",
+        "bingetovlc handler", MB_OKCANCEL | MB_ICONQUESTION);
+    if (answer != IDOK) {
+        puts("nothing was changed");
+        return EXIT_OK;
+    }
+    rc = run_install(NULL, vlcpath);
+    MessageBoxA(NULL,
+        rc == EXIT_OK
+            ? "Registered. Open a vlc:// link from Chrome or Edge; the browser asks once."
+            : "Registration failed. Run the handler with --install in a terminal to see why.",
+        "bingetovlc", MB_OK | (rc == EXIT_OK ? MB_ICONINFORMATION : MB_ICONERROR));
+    return rc;
+}
+#else
+static int run_manual(const char *vlcpath) {
+    (void)vlcpath;
+    puts("bingetovlc handler (portable build).");
+    puts("Run it with a vlc:// URI, or use --install / --uninstall / --diagnostics / --help.");
+    puts("The Windows build opens a confirmation dialog here instead.");
+    return EXIT_OK;
+}
+#endif
+
 int main(int argc, char **argv) {
     int i;
     int selftest = 0, diagnostics = 0, install = 0, uninstall = 0, keep = 0, help = 0;
@@ -2361,5 +2411,7 @@ int main(int argc, char **argv) {
     if (uninstall) return run_uninstall(schemespec);
     if (selftest) return run_selftest(uri);
     if (diagnostics) return show_diagnostics(vlcpath);
+    /* No URI and no action asked for: a double-click, not a hand-off. */
+    if (!uri) return run_manual(vlcpath);
     return run_handler(uri, vlcpath, keep);
 }

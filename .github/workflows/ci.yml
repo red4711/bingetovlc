@@ -128,14 +128,15 @@ jobs:
           "ZIG_EXE=$zig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           & $zig version
 
-      # The same command tools/windows/build-launcher.sh runs locally; Zig is the
-      # only compiler needed, and 0.13.0 is the pinned version.
+      # tools/windows/build-launcher.sh is the single build path, locally and here,
+      # so the version the exe reports is the one in package.json in both. Zig is
+      # the only compiler needed, and 0.13.0 is the pinned version.
       - name: Build the native handler
-        shell: pwsh
+        shell: bash
+        env:
+          ZIG: ${{ env.ZIG_EXE }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          & $env:ZIG_EXE cc -target x86_64-windows-gnu -static -Os -s -o tools/windows/bingetovlc-handler.exe tools/windows/launcher.c
-          if ($LASTEXITCODE -ne 0) { throw "zig cc failed with exit $LASTEXITCODE" }
+          bash tools/windows/build-launcher.sh
 
       - name: The build produced a PE executable
         shell: pwsh
@@ -147,6 +148,19 @@ jobs:
             throw "$exe is not a PE image (no MZ header)"
           }
           Write-Host ("built {0} ({1} bytes)" -f $exe, $bytes.Length)
+
+      - name: The handler reports the project version
+        # A hard-coded version string once shipped as 1.0.0 on a 0.3.0 release and
+        # reached a user's bug report. It is injected from package.json now, and
+        # this is the check that keeps it that way.
+        shell: pwsh
+        run: |
+          $want = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $out = & tools/windows/bingetovlc-handler.exe --diagnostics 2>&1 | Out-String
+          if ($out -notmatch [regex]::Escape("handler version : $want")) {
+            throw "the handler does not report version $want; it said:`n$out"
+          }
+          Write-Host "handler reports $want"
 
       # The exe is the only place a real user's playlist can be silently
       # corrupted on the way to VLC, so it is asserted against the same vectors
